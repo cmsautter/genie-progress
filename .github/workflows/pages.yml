@@ -1,0 +1,62 @@
+name: Publish replay benchmark
+on:
+  workflow_dispatch:
+    inputs:
+      asset:
+        description: Immutable JSON report archive in the reports release
+        required: true
+        type: string
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: false
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Download selected report
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPORT_ASSET: ${{ inputs.asset }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          python3 - <<'PY'
+          import os, re, subprocess
+          name = os.environ['REPORT_ASSET']
+          assert re.fullmatch(r'report-[0-9a-f]{20}\.tar\.gz', name)
+          subprocess.run(['gh', 'release', 'download', 'reports', '--repo', os.environ['REPOSITORY'], '--pattern', name, '--dir', '/tmp/report'], check=True)
+          PY
+      - name: Prepare static website
+        env:
+          REPORT_ASSET: ${{ inputs.asset }}
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib, shutil, tarfile
+          shutil.copytree('site', 'dist')
+          with tarfile.open(pathlib.Path('/tmp/report') / os.environ['REPORT_ASSET']) as archive:
+              total = 0
+              for member in archive:
+                  path = pathlib.PurePosixPath(member.name)
+                  assert member.isfile() and not path.is_absolute() and '..' not in path.parts
+                  assert str(path) == 'manifest.json' or (len(path.parts) == 2 and path.parts[0] == 'data' and path.suffix == '.json')
+                  total += member.size
+                  assert member.size < 25 * 1024**2 and total < 250 * 1024**2
+                  data = archive.extractfile(member).read()
+                  json.loads(data)
+                  target = pathlib.Path('dist') / str(path)
+                  target.parent.mkdir(parents=True, exist_ok=True)
+                  target.write_bytes(data)
+          PY
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: dist
+      - uses: actions/deploy-pages@v4
+        id: deployment
