@@ -35,6 +35,7 @@ function render(){
   $('run-state').textContent=r.status==='running'?'● Measuring recordings':r.status==='building'?'● Building engine':r.status==='complete'?'● Run complete':r.status;
   const commit=el('a',r.sha.slice(0,12));commit.href='https://github.com/librematch/genie/commit/'+r.sha;commit.target='_blank';commit.rel='noopener';$('commit').replaceChildren(commit);
   $('run-time').textContent=(r.imported?'Imported historical scan · ':'')+r.architecture+' · '+date(r.finished||r.created);
+  if(r.continuation)$('run-time').textContent+=' · '+fmt(r.continuation.preserved_results)+' results retained from prior worker';
   $('run-progress').style.width=(100*s.finished/Math.max(1,s.total))+'%';
   $('measured').textContent=fmt(s.finished);$('measured-sub').textContent='of '+fmt(s.total)+' in this snapshot';
   $('checked').textContent=fmt(s.counts.complete_checked||0);
