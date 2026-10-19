@@ -19,8 +19,13 @@ function recordingLink(r){
 }
 function date(value){return value ? new Date(value).toLocaleString(undefined,{dateStyle:'medium',timeStyle:'short'}) : 'In progress';}
 function visibleRuns(runs){
-  const predecessors=new Set(runs.map(r=>r.continuation?.run_id).filter(Boolean));
-  return runs.filter(r=>!(r.status==='continued'&&predecessors.has(r.id)));
+  const seen=new Set();
+  return [...runs].sort((a,b)=>Date.parse(b.created)-Date.parse(a.created)).filter(r=>{
+    if(r.pilot||r.status==='continued')return false;
+    const key=r.imported?'historical:'+r.id:r.sha+':'+(r.build_profile||'legacy');
+    if(seen.has(key))return false;
+    seen.add(key);return true;
+  });
 }
 function runName(r){return r.imported?'Historical baseline':r.pilot?'Pilot '+r.sha.slice(0,8):r.sha.slice(0,8);}
 function runStatus(r){
@@ -28,7 +33,18 @@ function runStatus(r){
   return {running:'In progress',queued:'Queued',building:'Preparing and building engine',complete:'Complete',continued:'Archived worker'}[r.status]||r.status;
 }
 function runLabel(r){
-  return runName(r)+' · '+runStatus(r)+' · '+date(r.created);
+  const profile=r.imported?'':({release:'Release',forced:'Profiling'}[r.build_profile]||r.build_profile||'');
+  return runName(r)+(profile?' · '+profile:'')+' · '+runStatus(r)+' · '+date(r.created);
+}
+function renderArchive(runs,visible){
+  const shown=new Set(visible.map(r=>r.id)),archived=runs.filter(r=>!shown.has(r.id));
+  $('archived-runs').hidden=!archived.length;
+  $('archived-count').textContent=fmt(archived.length);
+  $('archived-list').replaceChildren();
+  for(const r of archived){
+    const item=el('li'),link=el('a',runLabel(r));
+    link.href='data/'+encodeURIComponent(r.id)+'.json';link.download='';item.append(link);$('archived-list').append(item);
+  }
 }
 function syncSelector(runs,force=false){
   const select=$('run-select');
@@ -60,6 +76,7 @@ async function refresh(){
     $('health').textContent=age<180000?'Worker reporting':age<7200000?'Report updated '+Math.round(age/60000)+'m ago':'Worker report stale';$('health').className='health '+(age<180000?'alive':age>=7200000?'stale':'');
     $('reference-count').textContent=fmt(manifest.reference_count);$('catalog-count').textContent=fmt(manifest.catalog_count);
     const runs=visibleRuns(manifest.runs);
+    renderArchive(manifest.runs,runs);
     if(!runs.length)throw Error('No benchmark runs have been exported yet.');
     if(!selected||!runs.some(r=>r.id===selected)||(followLatest&&document.activeElement!==$('run-select')))
       selected=(runs.find(r=>!r.pilot)||runs[0]).id;
