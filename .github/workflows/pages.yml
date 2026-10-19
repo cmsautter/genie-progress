@@ -131,6 +131,26 @@ jobs:
               summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + '\n')
               # Preserve the requested extensionless URL as an identical downloadable JSON file.
               shutil.copyfile(summary_path, summary_path.with_suffix(''))
+              simulated_rows = [
+                  {key: row.get(key) for key in (
+                      'match_id', 'sha256', 'fixed', 'build', 'status',
+                      'completed_ticks', 'total_ticks', 'checkpoints_passed', 'total_checkpoints',
+                      'last_matching_checkpoint_tick', 'ignored_commands_to_stop',
+                  )}
+                  for row in report['rows'] if row['status'] == 'complete'
+              ]
+              simulated_rows.sort(key=lambda row: (-(row['checkpoints_passed'] or 0), row['match_id']))
+              simulated = {
+                  'schema': 1, 'generated': manifest['generated'],
+                  'run': {key: report['run'].get(key) for key in (
+                      'id', 'sha', 'status', 'created', 'finished', 'build_profile', 'architecture',
+                  )},
+                  'source_report': 'data/' + run['id'] + '.json',
+                  'scope': 'growing', 'count': len(simulated_rows), 'rows': simulated_rows,
+              }
+              simulated_path = pathlib.Path('dist') / (name.removesuffix('.json') + '-simulated.json')
+              simulated_path.write_text(json.dumps(simulated, ensure_ascii=False, indent=2) + '\n')
+              shutil.copyfile(simulated_path, simulated_path.with_suffix(''))
           PY
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v4
