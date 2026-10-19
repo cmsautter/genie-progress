@@ -6,25 +6,89 @@ const colors = {unsupported:'#f0b17b',initialization_unsupported:'#d29279',check
 const color = k => colors[k] || '#8391a9';
 const outcome = r => r.status === 'complete' ? (r.checkpoints_passed ? 'complete_checked':'complete_unchecked') : r.status;
 let manifest, data, mode = 'fixed', page = 0, selected = '', request = 0, followLatest = true;
+let manifestRequest=0, detailsReady=false, detailsLoading=false, detailsError='', pendingKey='', detailsController;
+let selectorKey='';
+const detailsCache=new Map();
 function el(tag, text, cls){const n=document.createElement(tag);if(text!==undefined)n.textContent=text;if(cls)n.className=cls;return n;}
 function date(value){return value ? new Date(value).toLocaleString(undefined,{dateStyle:'medium',timeStyle:'short'}) : 'In progress';}
+function visibleRuns(runs){
+  const predecessors=new Set(runs.map(r=>r.continuation?.run_id).filter(Boolean));
+  return runs.filter(r=>!(r.status==='continued'&&predecessors.has(r.id)));
+}
+function runName(r){return r.imported?'Historical baseline':r.pilot?'Pilot '+r.sha.slice(0,8):r.sha.slice(0,8);}
+function runLabel(r){
+  const states={running:'In progress',queued:'Queued',building:'Building',complete:'Complete',build_failed:'Build failed',continued:'Archived worker'};
+  return runName(r)+' · '+(states[r.status]||r.status)+' · '+date(r.created);
+}
+function syncSelector(runs,force=false){
+  const select=$('run-select');
+  // Rebuilding a focused native menu can discard a choice before change fires.
+  if(!force&&document.activeElement===select)return;
+  const key=JSON.stringify(runs.map(r=>[r.id,runLabel(r)]));
+  if(key!==selectorKey){
+    select.replaceChildren();
+    for(const [label,items]of [['Benchmark runs',runs.filter(r=>!r.pilot)],['Diagnostic pilots',runs.filter(r=>r.pilot)]]){
+      if(!items.length)continue;
+      const group=el('optgroup');group.label=label;
+      for(const r of items){const option=el('option',runLabel(r));option.value=r.id;group.append(option);}
+      select.append(group);
+    }
+    selectorKey=key;
+  }
+  select.value=selected;
+}
+function detailsVersion(r){
+  const changing=['running','queued','building'].includes(r.status);
+  return [r.id,r.status,r.finished||'',r.fixed.finished,r.growing.finished,changing?manifest.generated:''].join('|');
+}
 async function refresh(){
+  const current=++manifestRequest;
   try {
-    const response=await fetch('manifest.json',{cache:'no-store'});if(!response.ok)throw Error('The result manifest is not available yet.');manifest=await response.json();
+    const response=await fetch('manifest.json',{cache:'no-store'});if(!response.ok)throw Error('The result manifest is not available yet.');
+    const value=await response.json();if(current!==manifestRequest)return;manifest=value;
     const age=manifest.heartbeat ? Date.now()-new Date(manifest.heartbeat).getTime():Infinity;
     $('health').textContent=age<180000?'Worker reporting':age<7200000?'Report updated '+Math.round(age/60000)+'m ago':'Worker report stale';$('health').className='health '+(age<180000?'alive':age>=7200000?'stale':'');
     $('reference-count').textContent=fmt(manifest.reference_count);$('catalog-count').textContent=fmt(manifest.catalog_count);
-    const select=$('run-select');select.replaceChildren();
-    for(const r of manifest.runs){const option=el('option',(r.imported?'Historical baseline':r.pilot?'Pilot':r.sha.slice(0,8))+' · '+r.status+' · '+date(r.created));option.value=r.id;select.append(option);}
-    if(!manifest.runs.length)throw Error('No benchmark runs have been exported yet.');
-    if(followLatest || !selected || !manifest.runs.some(r=>r.id===selected))selected=(manifest.runs.find(r=>!r.pilot)||manifest.runs[0]).id;
-    select.value=selected;await load();
+    const runs=visibleRuns(manifest.runs);
+    if(!runs.length)throw Error('No benchmark runs have been exported yet.');
+    if(!selected||!runs.some(r=>r.id===selected)||(followLatest&&document.activeElement!==$('run-select')))
+      selected=(runs.find(r=>!r.pilot)||runs[0]).id;
+    syncSelector(runs);await loadDetails(runs.find(r=>r.id===selected));
   } catch(error){$('error').hidden=false;$('error').textContent=error.message;}
 }
-async function load(){
+async function loadDetails(run){
+  const id=run.id,version=detailsVersion(run);
+  if(pendingKey===version){data.run=run;render();return;}
   const current=++request;
-  const response=await fetch('data/'+encodeURIComponent(selected)+'.json',{cache:'no-store'});if(!response.ok)throw Error('Selected run could not be loaded.');
-  const value=await response.json();if(current!==request)return;data=value;render();
+  if(detailsController)detailsController.abort();
+  detailsController=new AbortController();pendingKey='';detailsError='';
+  const cached=detailsCache.get(id);
+  if(cached?.version===version){
+    data={...cached.value,run};detailsReady=true;detailsLoading=false;render();return;
+  }
+  const same=data?.run.id===id;
+  if(same){data={...data,run};}else{data={run,rows:[],identity:null};detailsReady=false;page=0;}
+  detailsLoading=true;pendingKey=version;
+  // Summary data is already in the small manifest. Switch it before the large download.
+  render();
+  try{
+    const response=await fetch('data/'+encodeURIComponent(id)+'.json?v='+encodeURIComponent(version),
+                               {cache:'no-store',signal:detailsController.signal});
+    if(!response.ok)throw Error('Recording details for '+runName(run)+' could not be loaded.');
+    const value=await response.json();
+    if(current!==request||selected!==id)return;
+    if(value.run?.id!==id||!Array.isArray(value.rows))throw Error('The server returned details for a different snapshot.');
+    detailsCache.delete(id);detailsCache.set(id,{version,value});
+    while(detailsCache.size>3)detailsCache.delete(detailsCache.keys().next().value);
+    data={...value,run};detailsReady=true;detailsLoading=false;pendingKey='';render();
+  }catch(error){
+    if(current!==request||error.name==='AbortError')return;
+    detailsLoading=false;pendingKey='';detailsError=error.message;render();
+  }
+}
+function selectSnapshot(id){
+  const run=visibleRuns(manifest.runs).find(r=>r.id===id);if(!run)return;
+  followLatest=false;selected=id;page=0;return loadDetails(run);
 }
 function render(){
   if(!data)return;const r=data.run,s=r[mode];
@@ -51,8 +115,14 @@ function render(){
   chart('percent-chart',s.histogram);chart('ticks-chart',s.ticks_histogram);
   $('blockers').replaceChildren();for(const b of s.blockers.slice(0,7)){const item=el('div'),line=el('div',undefined,'blocker-label'),label=el('span',b.reason);label.title=b.reason;line.append(label,el('strong',fmt(b.count)));const track=el('div',undefined,'blocker-track'),fill=el('div');fill.style.width=100*b.count/Math.max(1,s.blockers[0].count)+'%';track.append(fill);item.append(line,track);$('blockers').append(item);}
   if(!s.blockers.length)$('blockers').append(el('p','No unsupported-condition results reported in this snapshot.','chart-note'));
-  $('error').hidden=!r.error;$('error').textContent=r.error||'';
-  $('identity').textContent=JSON.stringify({run_id:r.id,...data.identity,comparison_note:'Progress changes compare the same recording hashes in the fixed cohort; historical and current instrumentation are identified separately.'},null,2);
+  const error=detailsError||r.error;$('error').hidden=!error;$('error').textContent=error||'';
+  $('table-state').hidden=!detailsLoading&&!detailsError;
+  $('table-state').textContent=detailsError?'Recording details unavailable.':detailsReady?'Updating recording details…':'Loading recording details for '+runName(r)+'…';
+  $('retry-details').hidden=!detailsError;
+  for(const id of ['search','status-filter','sort'])$(id).disabled=!detailsReady;
+  $('identity').textContent=JSON.stringify({run_id:r.id,...(data.identity||{}),details_loaded:detailsReady,comparison_note:'Progress changes compare the same recording hashes in the fixed cohort; historical and current instrumentation are identified separately.'},null,2);
+  const prior=$('prior-worker');prior.hidden=!r.continuation;
+  if(r.continuation){prior.href='data/'+encodeURIComponent(r.continuation.run_id)+'.json';prior.textContent='Download the pre-upgrade worker snapshot ('+fmt(r.continuation.preserved_results)+' retained results)';}
   $('download').href='data/'+r.id+'.json';
   const filter=$('status-filter'),keep=filter.value;filter.replaceChildren(new Option('All outcomes','all'));for(const key of Object.keys(s.counts))filter.add(new Option(names[key]||key,key));filter.value=Object.hasOwn(s.counts,keep)?keep:'all';
   renderTable();
@@ -68,6 +138,7 @@ function chart(id,buckets){
   $(id).replaceChildren(svg);
 }
 function renderTable(){
+  if(!detailsReady){$('rows').replaceChildren();$('row-count').textContent=detailsError?'Recording details unavailable':'Loading recording details…';$('page-number').textContent='—';$('previous').disabled=true;$('next').disabled=true;return;}
   if(!data)return;let rows=data.rows.filter(r=>mode==='growing'||r.fixed);const term=$('search').value.toLowerCase(),filter=$('status-filter').value;
   rows=rows.filter(r=>(filter==='all'||outcome(r)===filter)&&(!term||r.match_id.includes(term)||JSON.stringify(r.unsupported||r.reason||r.differences||'').toLowerCase().includes(term)));
   const progress=r=>r.total_ticks?100*(r.completed_ticks||0)/r.total_ticks:-1;
@@ -77,7 +148,10 @@ function renderTable(){
   $('row-count').textContent=fmt(rows.length)+' matching recordings';$('page-number').textContent=(page+1)+' / '+pages;$('previous').disabled=page===0;$('next').disabled=page===pages-1;
 }
 for(const key of ['fixed','growing'])$(key).onclick=()=>{mode=key;page=0;render();};
-$('run-select').onchange=()=>{followLatest=false;selected=$('run-select').value;page=0;load().catch(e=>{$('error').hidden=false;$('error').textContent=e.message;});};
+const showLoadError=error=>{$('error').hidden=false;$('error').textContent=error.message;};
+$('run-select').onchange=event=>{const pending=selectSnapshot(event.currentTarget.value);if(pending)pending.catch(showLoadError);};
+$('run-select').onblur=()=>{if(manifest)syncSelector(visibleRuns(manifest.runs),true);};
+$('retry-details').onclick=()=>{detailsCache.delete(selected);loadDetails(manifest.runs.find(r=>r.id===selected)).catch(showLoadError);};
 for(const id of ['search','status-filter','sort'])$(id).addEventListener('input',()=>{page=0;renderTable();});
 $('previous').onclick=()=>{page--;renderTable();};$('next').onclick=()=>{page++;renderTable();};
 $('provenance').onclick=()=>$('method').showModal();$('close-method').onclick=()=>$('method').close();
