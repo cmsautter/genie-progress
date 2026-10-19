@@ -17,7 +17,7 @@ Recordings start from their saved headers. The simulation stops at its first rep
 
 Completed recordings with matching usable checkpoints are separate from recordings without checkpoints. These checkpoints contain partial state checksums; matching them does not establish complete equality of every simulation field or tick. Ignored commands, parse errors, multiple chapters, timeouts and process failures remain visible.
 
-The original historical baseline used local diagnostic instrumentation and is labeled separately. New results are produced by a background benchmark worker and published as static JSON reports. The website does not run game code in visitors' browsers.
+The original historical baseline used local diagnostic instrumentation and is labeled separately. New results are produced by a background benchmark worker and published as static JSON reports. The website does not run game code in visitors' browsers. During a run, new results are published about every five minutes; the page checks for updates every minute. Deployment and caching can add delay.
 
 ## Repository contents
 
