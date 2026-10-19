@@ -39,6 +39,7 @@ jobs:
         run: |
           python3 - <<'PY'
           import datetime, json, os, pathlib, re, shutil, tarfile
+          from collections import Counter, defaultdict
           shutil.copytree('site', 'dist')
           with tarfile.open(pathlib.Path('/tmp/report') / os.environ['REPORT_ASSET']) as archive:
               total = 0
@@ -58,9 +59,54 @@ jobs:
               (run for run in manifest['runs'] if not run.get('pilot') and run['status'] != 'continued'),
               key=lambda run: datetime.datetime.fromisoformat(run['created']), reverse=True,
           )
+          def stopping_reasons(rows, total):
+              outcomes = Counter(row['status'] for row in rows)
+              groups = defaultdict(set)
+              labels = {
+                  'unsupported': 'Unsupported update',
+                  'initialization_unsupported': 'Unsupported initialization',
+                  'checkpoint_mismatch': 'Recorded checkpoint mismatch',
+                  'parse_error': 'Recording parse error',
+                  'multiple_chapters': 'Multiple recording chapters',
+                  'timeout': 'Replay time limit exceeded',
+                  'process_failure': 'Replay process failed',
+                  'worker_error': 'Worker error',
+                  'input_changed': 'Recording changed',
+                  'invalid_result': 'Invalid engine result',
+                  'version_mismatch': 'Wrong game version',
+                  'empty': 'Empty recording',
+              }
+              for row in rows:
+                  status = row['status']
+                  if status == 'complete':
+                      continue
+                  reasons = set()
+                  for condition in row.get('unsupported', []):
+                      for item in [condition, *condition.get('freezes', [])]:
+                          if item.get('reason'):
+                              reasons.add(str(item['reason']))
+                  if not reasons:
+                      reasons.add(str(row.get('reason') or row.get('error') or labels.get(status, status)))
+                  for reason in reasons:
+                      groups[(status, reason)].add(row['match_id'])
+              stopped = len(rows) - outcomes['complete']
+              return {
+                  'total_recordings': total,
+                  'measured_recordings': len(rows),
+                  'pending_recordings': max(0, total - len(rows)),
+                  'stopped_recordings': stopped,
+                  'outcomes': dict(sorted(outcomes.items())),
+                  'reasons': [
+                      {'status': status, 'reason': reason, 'count': len(ids),
+                       'percent_of_stopped': round(100 * len(ids) / stopped, 2),
+                       'examples': sorted(ids)[:5]}
+                      for (status, reason), ids in sorted(groups.items(), key=lambda item: (-len(item[1]), *item[0]))
+                  ],
+              }
           for name, candidates in (
               ('latest.json', runs),
               ('latest-completed.json', [run for run in runs if run['status'] == 'complete']),
+              ('latest-running.json', [run for run in runs if run['status'] in ('queued', 'building', 'running')]),
           ):
               if not candidates:
                   continue
@@ -73,6 +119,18 @@ jobs:
               assert isinstance(report['rows'], list) and isinstance(report['identity'], dict)
               # Serve the complete original report, without redirects or a reduced schema.
               shutil.copyfile(source, pathlib.Path('dist') / name)
+              summary = {
+                  'schema': 1, 'generated': manifest['generated'],
+                  'run': report['run'], 'source_report': 'data/' + run['id'] + '.json',
+                  'counting': 'Distinct recordings per reported condition at their first stopping point. '
+                              'A recording can report multiple conditions, so reason counts can overlap.',
+                  'fixed': stopping_reasons([row for row in report['rows'] if row['fixed']], report['run']['fixed']['total']),
+                  'growing': stopping_reasons(report['rows'], report['run']['growing']['total']),
+              }
+              summary_path = pathlib.Path('dist') / (name.removesuffix('.json') + '-stopping-simulation.json')
+              summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + '\n')
+              # Preserve the requested extensionless URL as an identical downloadable JSON file.
+              shutil.copyfile(summary_path, summary_path.with_suffix(''))
           PY
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v4
