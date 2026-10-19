@@ -4,7 +4,7 @@
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="description" content="Reproducible progress measurements for the GenieRust Age of Empires II replay simulation.">
   <title>Genie Replay Lab</title><link rel="stylesheet" href="style.css">
-  <script src="app.js?v=snapshots-2" defer></script>
+  <script src="app.js?v=build-status-3" defer></script>
 </head>
 <body>
   <header class="topbar"><a class="brand" href="#"><span class="mark">G</span> GENIE <span class="brand-light">REPLAY LAB</span></a><div class="top-links"><a href="https://github.com/librematch/genie">Engine ↗</a><a href="https://github.com/cmsautter/genie-progress">About & source ↗</a><span id="health" class="health">Loading worker status</span></div></header>
@@ -15,7 +15,8 @@
     <p class="scope-note">Public results update about every five minutes during a run, plus deployment delay. This page checks for updates every minute.</p>
     <div class="run-strip"><span id="run-state"></span><span id="commit"></span><span id="run-time"></span><button id="provenance" class="text-button">Method & provenance ↗</button></div>
     <div class="progress-track"><div id="run-progress"></div></div>
-    <div id="error" class="error" hidden></div>
+    <div id="error" class="error" role="status" aria-live="polite" hidden></div>
+    <details id="failure-diagnostics" hidden><summary>Failure diagnostics</summary><pre id="failure-diagnostic-text"></pre></details>
     <section class="metrics" aria-label="Summary"><article><span>REPLAYS MEASURED</span><strong id="measured">—</strong><small id="measured-sub"></small></article><article class="accent"><span>END REACHED · CHECKPOINTS MATCH</span><strong id="checked">—</strong><small id="checked-sub">Recorded checkpoints are partial state checks.</small></article><article><span>MEDIAN SIMULATION PROGRESS</span><strong id="median">—</strong><small id="median-sub"></small></article><article><span>FIXED-SET CHANGE</span><strong id="advanced">—</strong><small id="advanced-sub"></small></article></section>
     <section class="outcomes panel"><div class="panel-heading"><div><p class="eyebrow">AT A GLANCE</p><h2>Where the runs land</h2></div><span id="outcome-note"></span></div><div id="outcome-bar" class="outcome-bar" aria-hidden="true"></div><div id="outcome-legend" class="legend"></div></section>
     <section class="chart-grid"><article class="panel"><div class="panel-heading"><div><p class="eyebrow">RECORDED UPDATE BOUNDARIES</p><h2>How far games get</h2></div><span>Log count scale</span></div><div id="percent-chart" class="chart" role="img" aria-label="Histogram of replay progress percentages"></div><p class="chart-note">1% buckets through 10%, then 5% buckets. Each bar has equal display width.</p></article><article class="panel"><div class="panel-heading"><div><p class="eyebrow">FIRST VISIBLE BARRIERS</p><h2>What stops the simulation</h2></div><span>Cases can overlap</span></div><div id="blockers" class="blockers"></div></article></section>
