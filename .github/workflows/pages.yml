@@ -38,7 +38,7 @@ jobs:
           REPORT_ASSET: ${{ inputs.asset }}
         run: |
           python3 - <<'PY'
-          import json, os, pathlib, shutil, tarfile
+          import datetime, json, os, pathlib, re, shutil, tarfile
           shutil.copytree('site', 'dist')
           with tarfile.open(pathlib.Path('/tmp/report') / os.environ['REPORT_ASSET']) as archive:
               total = 0
@@ -53,6 +53,26 @@ jobs:
                   target = pathlib.Path('dist') / str(path)
                   target.parent.mkdir(parents=True, exist_ok=True)
                   target.write_bytes(data)
+          manifest = json.loads(pathlib.Path('dist/manifest.json').read_text())
+          runs = sorted(
+              (run for run in manifest['runs'] if not run.get('pilot') and run['status'] != 'continued'),
+              key=lambda run: datetime.datetime.fromisoformat(run['created']), reverse=True,
+          )
+          for name, candidates in (
+              ('latest.json', runs),
+              ('latest-completed.json', [run for run in runs if run['status'] == 'complete']),
+          ):
+              if not candidates:
+                  continue
+              run = candidates[0]
+              assert re.fullmatch(r'[A-Za-z0-9_-]+', run['id'])
+              source = pathlib.Path('dist/data') / (run['id'] + '.json')
+              report = json.loads(source.read_bytes())
+              assert report['run']['id'] == run['id'] and report['run']['sha'] == run['sha']
+              assert report['run']['status'] == run['status']
+              assert isinstance(report['rows'], list) and isinstance(report['identity'], dict)
+              # Serve the complete original report, without redirects or a reduced schema.
+              shutil.copyfile(source, pathlib.Path('dist') / name)
           PY
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v4

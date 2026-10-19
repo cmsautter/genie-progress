@@ -19,6 +19,18 @@ Completed recordings with matching usable checkpoints are separate from recordin
 
 The original historical baseline used local diagnostic instrumentation and is labeled separately. New results are produced by a background benchmark worker and published as static JSON reports. The website does not run game code in visitors' browsers. During a run, new results are published about every five minutes; the page checks for updates every minute. Deployment and caching can add delay.
 
+## Stable JSON URLs
+
+| URL | Contents |
+| --- | --- |
+| [latest.json](https://cmsautter.github.io/genie-progress/latest.json) | The newest benchmark run, including partial results while it is in progress. |
+| [latest-completed.json](https://cmsautter.github.io/genie-progress/latest-completed.json) | The newest completed benchmark run. |
+| [manifest.json](https://cmsautter.github.io/genie-progress/manifest.json) | Available runs, summaries and engine commits. |
+
+Both report URLs return the full per-run JSON with `run`, `identity` and `rows`, including recording IDs, SHA256 hashes, outcomes and checkpoint counts. They update with each publication; deployment and caching can add delay. Diagnostic pilots and superseded worker continuations are excluded. `latest.json` can also describe a build or setup failure, so check `run.status` before using its results. The completed URL becomes available after the first completed run.
+
+For a reproducible reference, use `run.id` from either report to construct `data/<run.id>.json`. To identify recordings that reached the end with recorded checkpoints matching, select rows with `status == "complete"`, `total_checkpoints > 0` and `checkpoints_passed == total_checkpoints`. Rows without usable checkpoints remain separate, and `ignored_commands_to_stop` records any ignored commands.
+
 ## Repository contents
 
 This repository contains the static dashboard and its report-deployment workflow. Sanitized report snapshots are available in the **Benchmark report snapshots** prerelease. The worker implementation is maintained separately.
