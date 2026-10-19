@@ -10,6 +10,13 @@ let manifestRequest=0, detailsReady=false, detailsLoading=false, detailsError=''
 let selectorKey='';
 const detailsCache=new Map();
 function el(tag, text, cls){const n=document.createElement(tag);if(text!==undefined)n.textContent=text;if(cls)n.className=cls;return n;}
+function recordingLink(r){
+  if(/^\d+$/.test(r.match_id)){
+    const link=el('a',r.match_id);link.href='https://www.aoe2insights.com/match/'+r.match_id+'/';link.target='_blank';link.rel='noopener';return link;
+  }
+  const ttl=/^ttl:(.*):[0-9a-f]{12}$/.exec(r.match_id);
+  const label=el('span',ttl?'TTL · '+ttl[1].replaceAll('_',' '):r.match_id);label.title=r.match_id;return label;
+}
 function date(value){return value ? new Date(value).toLocaleString(undefined,{dateStyle:'medium',timeStyle:'short'}) : 'In progress';}
 function visibleRuns(runs){
   const predecessors=new Set(runs.map(r=>r.continuation?.run_id).filter(Boolean));
@@ -150,11 +157,11 @@ function chart(id,buckets){
 function renderTable(){
   if(!detailsReady){$('rows').replaceChildren();$('row-count').textContent=detailsError?'Recording details unavailable':'Loading recording details…';$('page-number').textContent='—';$('previous').disabled=true;$('next').disabled=true;return;}
   if(!data)return;let rows=data.rows.filter(r=>mode==='growing'||r.fixed);const term=$('search').value.toLowerCase(),filter=$('status-filter').value;
-  rows=rows.filter(r=>(filter==='all'||outcome(r)===filter)&&(!term||r.match_id.includes(term)||JSON.stringify(r.unsupported||r.reason||r.differences||'').toLowerCase().includes(term)));
+  rows=rows.filter(r=>(filter==='all'||outcome(r)===filter)&&(!term||r.match_id.toLowerCase().includes(term)||JSON.stringify(r.unsupported||r.reason||r.differences||'').toLowerCase().includes(term)));
   const progress=r=>r.total_ticks?100*(r.completed_ticks||0)/r.total_ticks:-1;
   rows.sort((a,b)=>$('sort').value==='id'?a.match_id.localeCompare(b.match_id):($('sort').value==='progress-asc'?1:-1)*(progress(a)-progress(b))||a.match_id.localeCompare(b.match_id));
   const pages=Math.max(1,Math.ceil(rows.length/30));page=Math.max(0,Math.min(page,pages-1));$('rows').replaceChildren();
-  for(const r of rows.slice(page*30,(page+1)*30)){const tr=el('tr'),link=el('a',r.match_id);link.href='https://www.aoe2insights.com/match/'+r.match_id+'/';link.target='_blank';link.rel='noopener';const first=el('td');first.append(link);const status=el('td'),badge=el('span',names[outcome(r)]||r.status,'badge');badge.style.setProperty('--badge',color(outcome(r)));status.append(badge);const ticks=el('td',r.total_ticks===undefined?'—':fmt(r.completed_ticks||0)+' / '+fmt(r.total_ticks));const percent=el('td');const meter=el('span',progress(r)<0?'—':progress(r).toFixed(2)+'%','micro-progress');meter.style.setProperty('--percent',Math.max(0,progress(r))+'%');percent.append(meter);const checkpoint=el('td',r.total_checkpoints===undefined?'—':fmt(r.checkpoints_passed||0)+' / '+fmt(r.total_checkpoints));if(r.ignored_commands_to_stop)checkpoint.title=r.ignored_commands_to_stop+' ignored command packets before stop';let reason=r.unsupported?.map(v=>v.reason).join('; ')||r.reason||'';if(r.status==='checkpoint_mismatch')reason='Mismatch after update '+fmt(r.first_failure_tick)+' · words '+[...new Set((r.differences||[]).map(d=>d.word))].join(', ');if(r.status==='complete')reason=r.checkpoints_passed?'All usable recorded checkpoints matched.':'No usable recorded checkpoints.';if(r.ignored_commands_to_stop)reason+=' '+fmt(r.ignored_commands_to_stop)+' ignored command packets.';tr.append(first,status,ticks,percent,checkpoint,el('td',reason));$('rows').append(tr);}
+  for(const r of rows.slice(page*30,(page+1)*30)){const tr=el('tr'),link=recordingLink(r);const first=el('td');first.append(link);const status=el('td'),badge=el('span',names[outcome(r)]||r.status,'badge');badge.style.setProperty('--badge',color(outcome(r)));status.append(badge);const ticks=el('td',r.total_ticks===undefined?'—':fmt(r.completed_ticks||0)+' / '+fmt(r.total_ticks));const percent=el('td');const meter=el('span',progress(r)<0?'—':progress(r).toFixed(2)+'%','micro-progress');meter.style.setProperty('--percent',Math.max(0,progress(r))+'%');percent.append(meter);const checkpoint=el('td',r.total_checkpoints===undefined?'—':fmt(r.checkpoints_passed||0)+' / '+fmt(r.total_checkpoints));if(r.ignored_commands_to_stop)checkpoint.title=r.ignored_commands_to_stop+' ignored command packets before stop';let reason=r.unsupported?.map(v=>v.reason).join('; ')||r.reason||'';if(r.status==='checkpoint_mismatch')reason='Mismatch after update '+fmt(r.first_failure_tick)+' · words '+[...new Set((r.differences||[]).map(d=>d.word))].join(', ');if(r.status==='complete')reason=r.checkpoints_passed?'All usable recorded checkpoints matched.':'No usable recorded checkpoints.';if(r.ignored_commands_to_stop)reason+=' '+fmt(r.ignored_commands_to_stop)+' ignored command packets.';tr.append(first,status,ticks,percent,checkpoint,el('td',reason));$('rows').append(tr);}
   $('row-count').textContent=fmt(rows.length)+' matching recordings';$('page-number').textContent=(page+1)+' / '+pages;$('previous').disabled=page===0;$('next').disabled=page===pages-1;
 }
 for(const key of ['fixed','growing'])$(key).onclick=()=>{mode=key;page=0;render();};
