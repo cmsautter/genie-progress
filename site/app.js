@@ -103,6 +103,8 @@ function render(){
   $('run-state').setAttribute('data-state',r.status);
   const commit=el('a',r.sha.slice(0,12));commit.href='https://github.com/librematch/genie/commit/'+r.sha;commit.target='_blank';commit.rel='noopener';$('commit').replaceChildren(commit);
   $('run-time').textContent=(r.imported?'Imported historical scan · ':'')+r.architecture+' · '+date(r.finished||r.created);
+  if(r.build_profile)$('run-time').textContent+=' · '+r.build_profile;
+  if(r.case_workers)$('run-time').textContent+=' · up to '+fmt(r.case_workers)+' processes';
   if(r.continuation)$('run-time').textContent+=' · '+fmt(r.continuation.preserved_results)+' results retained from prior worker';
   $('run-progress').style.width=(100*s.finished/Math.max(1,s.total))+'%';
   $('measured').textContent=fmt(s.finished);$('measured-sub').textContent='of '+fmt(s.total)+' in this snapshot';
