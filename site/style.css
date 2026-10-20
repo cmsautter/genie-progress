@@ -26,6 +26,24 @@
 
 .replay-changes{margin-bottom:20px}.change-metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:18px 0}.change-metrics article{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:10px;padding:17px;background:color-mix(in srgb,var(--tile) 33%,transparent)}.change-metrics span{font-size:10.5px;color:var(--muted);letter-spacing:.05em}.change-metrics strong{font-size:31px;font-weight:550;font-variant-numeric:tabular-nums}.positive{color:var(--teal)}.negative{color:var(--negative)}.change-warnings{padding:10px 12px;background:color-mix(in srgb,var(--orange) 6%,transparent);border-left:2px solid var(--warn-line);color:var(--warn-text);font-size:11px}.replay-changes .table-controls{margin-top:20px}.changes-table{min-width:1100px}.changes-table td{vertical-align:top}.changes-table td:first-child{font-size:11px;min-width:110px}.changes-table td:nth-child(3),.changes-table td:nth-child(4){white-space:nowrap;font-variant-numeric:tabular-nums;min-width:140px}.changes-table td:nth-child(5),.changes-table td:nth-child(6){min-width:225px;max-width:360px}.changes-table small,.changes-table .delta{display:block;margin-top:5px}.changes-table small{font-size:11px;color:var(--muted)}.changes-table .delta{font-weight:550;font-size:12px}.changes-table summary{cursor:pointer;white-space:normal;overflow-wrap:anywhere}.change-reason{font-size:10px;line-height:1.55;overflow-wrap:anywhere;margin:8px 0;color:var(--text-2)}.change-kind{font-size:10px}.change-kind.advanced{color:var(--teal)}.change-kind.regressed{color:var(--negative)}.change-kind.mixed,.change-kind.measurement{color:var(--orange)}.change-extra{font-size:9px;color:var(--muted);margin-top:8px}.change-extra p{margin:5px 0;white-space:normal}@media(max-width:650px){.change-metrics{grid-template-columns:1fr 1fr}.replay-changes>.panel-heading{align-items:flex-start;flex-direction:column}.change-metrics strong{font-size:27px}}
 
+.engine-trend{margin-bottom:25px}
+.engine-trend[hidden]{display:none}
+.trend-grid{display:grid;grid-template-columns:1fr 1fr;gap:24px}
+.trend-grid figure{margin:0;min-width:0}
+.trend-grid figcaption{font-size:12px;color:var(--text-2);margin-bottom:6px}
+.trend-chart{height:auto}
+.trend-chart svg{height:auto;display:block}
+.trend-column{cursor:pointer;outline:none}
+.trend-column:hover .trend-hitbox,.trend-column:focus .trend-hitbox{fill:color-mix(in srgb,var(--link) 7%,transparent)}
+.trend-column:focus .trend-hitbox{stroke:var(--teal);stroke-width:.6}
+.trend-column.selected .trend-hitbox{fill:color-mix(in srgb,var(--link) 10%,transparent)}
+.chart .trend-value{fill:var(--text);font-weight:600}
+.trend-table{min-width:760px;margin-top:18px}
+.trend-table tr.selected td{background:color-mix(in srgb,var(--link) 8%,transparent)}
+.trend-table td{font-variant-numeric:tabular-nums}
+.trend-table small{display:block;font-size:11px;color:var(--muted);margin-top:4px}
+.trend-open{margin:0;text-align:left;color:var(--link);font:inherit;font-family:ui-monospace,monospace}
+@media(max-width:950px){.trend-grid{grid-template-columns:1fr}}
 .timing-panel{margin:-5px 0 25px}.timing-metrics{display:grid;grid-template-columns:1.3fr 1fr 1fr;gap:14px}.timing-metrics article{min-width:0;display:flex;flex-direction:column;padding:17px 21px;border:1px solid var(--line);border-radius:10px;background:color-mix(in srgb,var(--tile) 60%,transparent)}.timing-metrics article>span{font-size:10.5px;font-weight:650;letter-spacing:.06em;color:var(--muted)}.timing-metrics strong{font-size:26px;font-weight:550;font-variant-numeric:tabular-nums;letter-spacing:-.02em;line-height:1.4;margin:4px 0}.timing-metrics small{font-size:12px;color:var(--muted)}.timing-panel .chart-note{line-height:1.6;max-width:1100px}.recordings-table{min-width:1020px}.recordings-table .recording-elapsed{white-space:nowrap;font-variant-numeric:tabular-nums;color:var(--text-2)}.recording-elapsed small{display:block;color:var(--muted);font-size:11px;margin-top:4px}@media(max-width:650px){.timing-metrics{grid-template-columns:1fr 1fr;gap:9px}.timing-metrics article{padding:13px}.timing-metrics article:first-child{grid-column:1/-1}.timing-metrics strong{font-size:25px}.timing-metrics small{font-size:9px}}
 
 .refresh-note{color:var(--warn-text);line-height:1.6}.refresh-note[hidden]{display:none}
