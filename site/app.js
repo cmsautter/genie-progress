@@ -28,6 +28,57 @@ const changesCache=new Map();
 const detailsCache=new Map();
 let checkpointDefinitions;
 const openMismatches=new Set();
+const manifestStorageKey='genie-replay-lab:latest-verified-manifest:v1';
+let fetchNonce=0;
+function refreshNote(text){$('refresh-note').textContent=text;$('refresh-note').hidden=!text;}
+function validManifest(value){
+  return Array.isArray(value?.runs)&&Number.isFinite(Date.parse(value.generated))&&
+    (!value.publication||Number.isFinite(Date.parse(value.publication.created)))&&value.runs.every(run=>
+    run&&typeof run.id==='string'&&typeof run.sha==='string'&&Number.isFinite(Date.parse(run.created))&&
+    ['fixed','growing'].every(scope=>typeof run[scope]?.finished==='number'&&typeof run[scope]?.total==='number'));
+}
+function storedManifest(){
+  try{const value=JSON.parse(globalThis.sessionStorage?.getItem(manifestStorageKey)||'null');return validManifest(value)?value:null;}
+  catch{return null;}
+}
+function rememberManifest(value){
+  try{globalThis.sessionStorage?.setItem(manifestStorageKey,JSON.stringify(value));}catch{/* Storage is optional. */}
+}
+function olderManifest(value,previous){
+  // Request IDs protect against late network requests, not old bytes returned
+  // by a cache for a newer request. Compare the publication itself as well.
+  if(previous.publication&&!value.publication)return true;
+  const stamp=m=>Date.parse(m.publication?.created||m.generated);
+  if(Number.isFinite(stamp(value))&&Number.isFinite(stamp(previous))&&stamp(value)<stamp(previous))return true;
+  const latest=m=>visibleRuns(m.runs)[0];
+  if(latest(value)&&latest(previous)&&Date.parse(latest(value).created)<Date.parse(latest(previous).created))return true;
+  const current=new Map(value.runs.map(run=>[run.id,run]));
+  const rank={queued:0,building:1,running:2,complete:3,build_failed:3,continued:3};
+  for(const old of previous.runs){
+    const run=current.get(old.id);if(!run)continue;
+    if(['fixed','growing'].some(scope=>run[scope].finished<old[scope].finished))return true;
+    if(rank[run.status]<rank[old.status])return true;
+  }
+  return false;
+}
+function reportURL(file,fallback,version,retry=false){
+  const path=file?.url||fallback;
+  if(!/^(data|coverage|changes)\/[A-Za-z0-9_-]+\.json$/.test(path))throw Error('Invalid report URL.');
+  return path+'?v='+encodeURIComponent(file?.sha256||version)+(retry?'&retry='+Date.now()+'-'+(++fetchNonce):'');
+}
+async function reportJSON(file,fallback,version,signal){
+  for(let attempt=0;attempt<2;attempt++){
+    const response=await fetch(reportURL(file,fallback,version,attempt>0),{cache:'no-store',signal});
+    if(!response.ok){if(attempt===0&&response.status===404&&file?.sha256)continue;const error=Error(response.status===404?'Report is not available in this published snapshot yet.':'Report could not be loaded.');error.status=response.status;throw error;}
+    if(!file?.sha256)return response.json();
+    if(!/^[a-f0-9]{64}$/.test(file.sha256))throw Error('Invalid report version.');
+    if(!globalThis.crypto?.subtle)throw Error('This browser cannot verify report versions.');
+    const raw=await response.arrayBuffer();
+    const hash=[...new Uint8Array(await crypto.subtle.digest('SHA-256',raw))].map(v=>v.toString(16).padStart(2,'0')).join('');
+    if(hash===file.sha256&&(file.bytes===undefined||file.bytes===raw.byteLength))return JSON.parse(new TextDecoder().decode(raw));
+  }
+  throw Error('A cache returned a different report version. Keeping the previous verified results and retrying on the next refresh.');
+}
 function el(tag, text, cls){const n=document.createElement(tag);if(text!==undefined)n.textContent=text;if(cls)n.className=cls;return n;}
 async function loadCheckpointDefinitions(){
   try{
@@ -143,14 +194,23 @@ function syncSelector(runs,force=false){
   select.value=selected;
 }
 function detailsVersion(r){
+  if(r.files?.details)return r.files.details.sha256;
   const changing=['running','queued','building'].includes(r.status);
   return [r.id,r.status,r.finished||'',r.fixed.finished,r.growing.finished,changing?manifest.generated:''].join('|');
 }
 async function refresh(){
   const current=++manifestRequest;
   try {
-    const response=await fetch('manifest.json',{cache:'no-store'});if(!response.ok)throw Error('The result manifest is not available yet.');
-    const value=await response.json();if(current!==manifestRequest)return;manifest=value;
+    const response=await fetch('manifest.json?refresh='+Date.now()+'-'+(++fetchNonce),{cache:'no-store'});if(!response.ok)throw Error('The result manifest is not available yet.');
+    let value=await response.json();if(current!==manifestRequest)return;
+    if(!validManifest(value))throw Error('The result manifest is invalid.');
+    const prior=manifest||storedManifest();
+    if(prior&&olderManifest(value,prior)){
+      refreshNote('An older cached update was ignored. Keeping the latest results already received.');
+      if(manifest)return;
+      value=prior;
+    }else{refreshNote('');rememberManifest(value);}
+    manifest=value;
     const age=manifest.heartbeat ? Date.now()-new Date(manifest.heartbeat).getTime():Infinity;
     $('health').textContent=age<180000?'Worker reporting':age<7200000?'Report updated '+Math.round(age/60000)+'m ago':'Worker report stale';$('health').className='health '+(age<180000?'alive':age>=7200000?'stale':'');
     $('reference-count').textContent=fmt(manifest.reference_count);$('catalog-count').textContent=fmt(manifest.catalog_count);
@@ -180,15 +240,16 @@ async function loadDetails(run){
   // Summary data is already in the small manifest. Switch it before the large download.
   render();
   try{
-    const response=await fetch('data/'+encodeURIComponent(id)+'.json?v='+encodeURIComponent(version),
-                               {cache:'no-store',signal:detailsController.signal});
-    if(!response.ok)throw Error('Recording details for '+runName(run)+' could not be loaded.');
-    const value=await response.json();
+    const value=await reportJSON(run.files?.details,'data/'+id+'.json',version,detailsController.signal);
     if(current!==request||selected!==id)return;
-    if(value.run?.id!==id||!Array.isArray(value.rows))throw Error('The server returned details for a different snapshot.');
+    if(value.run?.id!==id||value.run.sha!==run.sha||!Array.isArray(value.rows))throw Error('The server returned details for a different snapshot.');
+    if(['fixed','growing'].some(scope=>value.run[scope]?.finished!==run[scope].finished||value.run[scope]?.total!==run[scope].total)
+       ||value.run.status!==run.status
+       ||(run.files?.details&&(value.rows.length!==run.growing.finished||value.rows.filter(row=>row.fixed).length!==run.fixed.finished)))
+      throw Error('Recording details do not match the selected report version. Keeping the previous verified results.');
     detailsCache.delete(id);detailsCache.set(id,{version,value});
     while(detailsCache.size>3)detailsCache.delete(detailsCache.keys().next().value);
-    data={...value,run};detailsReady=true;detailsLoading=false;pendingKey='';render();
+    data={...value,run:manifest.runs.find(latest=>latest.id===id)||run};detailsReady=true;detailsLoading=false;pendingKey='';render();
   }catch(error){
     if(current!==request||error.name==='AbortError')return;
     detailsLoading=false;pendingKey='';detailsError=error.message;render();
@@ -239,7 +300,7 @@ function render(){
   $('identity').textContent=JSON.stringify({run_id:r.id,...(data.identity||{}),details_loaded:detailsReady,comparison_note:'Progress changes compare the same recording hashes in the fixed cohort; historical and current instrumentation are identified separately.'},null,2);
   const prior=$('prior-worker');prior.hidden=!r.continuation;
   if(r.continuation){prior.href='data/'+encodeURIComponent(r.continuation.run_id)+'.json';prior.textContent='Download the pre-upgrade worker snapshot ('+fmt(r.continuation.preserved_results)+' retained results)';}
-  $('download').href='data/'+r.id+'.json';
+  $('download').href=reportURL(r.files?.details,'data/'+r.id+'.json',detailsVersion(r));
   const filter=$('status-filter'),keep=filter.value;filter.replaceChildren(new Option('All outcomes','all'));for(const key of Object.keys(s.counts))filter.add(new Option(names[key]||key,key));filter.value=Object.hasOwn(s.counts,keep)?keep:'all';
   renderCheckpointGroups();renderCommandCoverage();renderReplayChanges();renderTable();
 }
@@ -264,7 +325,7 @@ function renderTiming(run,scope){
   $('timing-note').textContent=text;
 }
 async function loadReplayChanges(run){
-  const version=run.changes?.version||detailsVersion(run),key=run.id+'|'+version;
+  const version=run.files?.changes?.sha256||run.changes?.version||detailsVersion(run),key=run.id+'|'+version;
   if(changesPendingKey===key)return;
   const current=++changesRequest;
   changesController?.abort();changesController=new AbortController();
@@ -274,9 +335,7 @@ async function loadReplayChanges(run){
   if(cached?.version===version){replayChanges=cached.value;changesLoading=false;changesPendingKey='';renderReplayChanges();return;}
   changesLoading=true;changesPendingKey=key;renderReplayChanges();
   try{
-    const response=await fetch('changes/'+encodeURIComponent(run.id)+'.json?v='+encodeURIComponent(version),{cache:'no-store',signal:changesController.signal});
-    if(!response.ok)throw Error(response.status===404?'Replay comparison is not available in this published snapshot yet.':'Replay comparison could not be loaded.');
-    const value=await response.json();
+    const value=await reportJSON(run.files?.changes,'changes/'+run.id+'.json',version,changesController.signal);
     if(current!==changesRequest||selected!==run.id)return;
     if(value.schema!==1||value.run?.id!==run.id||value.run.sha!==run.sha||!Array.isArray(value.rows)
       ||(value.available&&(value.fixed?.total_recordings!==run.fixed.total||value.growing?.total_recordings!==run.growing.total))
@@ -337,7 +396,7 @@ function renderReplayChanges(){
   $('changes-page').textContent=(changesPage+1)+' / '+pages;$('changes-previous').disabled=changesPage===0;$('changes-next').disabled=changesPage===pages-1;
 }
 async function loadCommandCoverage(run){
-  const version=run.id+'|'+manifest.generated;
+  const version=run.id+'|'+(run.files?.coverage?.sha256||manifest.generated);
   if(commandPendingKey===version)return;
   const current=++commandRequest;
   if(commandController)commandController.abort();commandController=new AbortController();commandPendingKey=version;
@@ -345,19 +404,14 @@ async function loadCommandCoverage(run){
   if(!same){commandCoverage=undefined;commandShowAll=false;commandCoverageState='loading';}
   commandCoverageError='';renderCommandCoverage();
   try{
-    const response=await fetch('coverage/'+encodeURIComponent(run.id)+'.json?v='+encodeURIComponent(manifest.generated),{cache:'no-store',signal:commandController.signal});
-    if(current!==commandRequest||selected!==run.id)return;
-    if(!response.ok){
-      if(response.status===404){commandCoverage=undefined;commandCoverageState='missing';renderCommandCoverage();return;}
-      throw Error('The command census could not be loaded.');
-    }
-    const value=await response.json();
+    if(run.files&&!run.files.coverage){commandCoverageState='missing';renderCommandCoverage();return;}
+    const value=await reportJSON(run.files?.coverage,'coverage/'+run.id+'.json',manifest.generated,commandController.signal);
     if(current!==commandRequest||selected!==run.id)return;
     if(value.schema!==1||value.run?.id!==run.id||value.run.sha!==run.sha||value.fixed?.total_recordings!==run.fixed.total||value.growing?.total_recordings!==run.growing.total||!Array.isArray(value.fixed.rows)||!Array.isArray(value.growing.rows))throw Error('Command coverage belongs to a different benchmark snapshot.');
     commandCoverage=value;commandCoverageState='ready';renderCommandCoverage();
   }catch(error){
     if(current!==commandRequest||error.name==='AbortError')return;
-    commandCoverageState='error';commandCoverageError=error.message;renderCommandCoverage();
+    commandCoverageState=error.status===404?'missing':'error';commandCoverageError=error.status===404?'':error.message;renderCommandCoverage();
   }finally{if(current===commandRequest)commandPendingKey='';}
 }
 function renderCommandCoverage(){
@@ -366,6 +420,7 @@ function renderCommandCoverage(){
   const state=$('command-coverage-state');
   if(!ready){state.textContent=commandCoverageError||(commandCoverageState==='missing'?'Command census queued or not available for this snapshot.':'Loading the full-recording command census…');return;}
   state.textContent=fmt(s.scanned_recordings)+' / '+fmt(s.total_recordings)+' recordings scanned'+(s.pending_recordings?' · '+fmt(s.pending_recordings)+' pending':'')+(s.unreadable_recordings?' · '+fmt(s.unreadable_recordings)+' unreadable bodies excluded':'');
+  if(commandCoverageState!=='ready')state.textContent+=' · keeping the last verified census'+(commandCoverageError?': '+commandCoverageError:' while the update is unavailable');
   const reviewed=commandStandard==='reviewed',types=s.type_counts.implemented+(reviewed?0:s.type_counts.partial),occurrences=s.occurrence_counts.implemented+(reviewed?0:s.occurrence_counts.partial);
   const percent=n=>n===null||n===undefined?'—':n.toFixed(n<1?2:1)+'%';
   $('command-types-label').textContent=reviewed?'VARIANTS WITH REVIEWED HANDLERS':'VARIANTS WITH A HANDLER';

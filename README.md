@@ -27,6 +27,10 @@ The comparison uses the most recently completed test of a **different engine com
 
 Use the fixed or growing corpus tabs, search by match ID or stopping reason, filter regressions or EOF transitions, and sort by tick or checkpoint gains/losses. **Download changes JSON** provides the full list for the selected run. Active runs update as more results arrive. A missing earlier retained report is reported explicitly, without substituting an unrelated baseline.
 
+### Refresh consistency
+
+The page keeps the latest results it has already received when a cache returns an older update. Each report is verified against the version named by its publication before replacing the displayed data. Mixed versions and temporary missing responses keep the last verified results visible and are retried. Manual historical selections and genuine changes between engine runs still work normally.
+
 ### Execution time
 
 The dashboard shows total run wall time, plus average and median time per replay in the selected corpus. Wall time includes build, pauses and retries. Replay averages use the final stored attempt, with current-run measurements separate from cached or historical timings. Missing timers are excluded.

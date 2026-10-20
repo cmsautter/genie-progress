@@ -22,23 +22,36 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Download selected report
+        id: report
         env:
           GH_TOKEN: ${{ github.token }}
           REPORT_ASSET: ${{ inputs.asset }}
           REPOSITORY: ${{ github.repository }}
         run: |
           python3 - <<'PY'
-          import os, re, subprocess
+          import json, os, pathlib, re, subprocess
           name = os.environ['REPORT_ASSET']
           assert re.fullmatch(r'report-[0-9a-f]{20}\.tar\.gz', name)
-          subprocess.run(['gh', 'release', 'download', 'reports', '--repo', os.environ['REPOSITORY'], '--pattern', name, '--dir', '/tmp/report'], check=True)
+          release = json.loads(subprocess.check_output(['gh', 'api', 'repos/' + os.environ['REPOSITORY'] + '/releases/tags/reports'], text=True))
+          assets = [asset for asset in release['assets'] if asset.get('state') == 'uploaded'
+                    and re.fullmatch(r'report-[0-9a-f]{20}\.tar\.gz', asset['name'])]
+          assert any(asset['name'] == name for asset in assets), 'Selected report is not a completed upload'
+          latest = max(assets, key=lambda asset: (asset['created_at'], asset['id']))
+          current = name == latest['name']
+          with pathlib.Path(os.environ['GITHUB_OUTPUT']).open('a') as output:
+              output.write('current=' + str(current).lower() + '\n')
+          if current:
+              subprocess.run(['gh', 'release', 'download', 'reports', '--repo', os.environ['REPOSITORY'], '--pattern', name, '--dir', '/tmp/report'], check=True)
+          else:
+              print('Skipping an older report: a newer completed publication already exists.')
           PY
       - name: Prepare static website
+        if: steps.report.outputs.current == 'true'
         env:
           REPORT_ASSET: ${{ inputs.asset }}
         run: |
           python3 - <<'PY'
-          import datetime, json, os, pathlib, re, shutil, tarfile
+          import datetime, hashlib, json, os, pathlib, re, shutil, tarfile
           from collections import Counter, defaultdict
           MiB = 1024**2
           MAX_REPORT_BYTES = 25 * MiB
@@ -64,6 +77,27 @@ jobs:
                   target.parent.mkdir(parents=True, exist_ok=True)
                   target.write_bytes(data)
           manifest = json.loads(pathlib.Path('dist/manifest.json').read_text())
+          # Validate byte-pinned references before generating aliases or deploying.
+          for run in manifest['runs']:
+              files = run.get('files')
+              if files is None:
+                  continue  # Previously published legacy archives remain readable.
+              assert 'details' in files and set(files) <= {'details', 'coverage', 'changes'}
+              for kind, descriptor in files.items():
+                  folder = {'details': 'data', 'coverage': 'coverage', 'changes': 'changes'}[kind]
+                  assert descriptor['url'] == folder + '/' + run['id'] + '.json'
+                  raw = (pathlib.Path('dist') / descriptor['url']).read_bytes()
+                  assert descriptor['bytes'] == len(raw)
+                  assert descriptor['sha256'] == hashlib.sha256(raw).hexdigest(), 'Report version hash differs'
+                  value = json.loads(raw)
+                  assert value['run']['id'] == run['id'] and value['run']['sha'] == run['sha']
+                  if kind == 'details':
+                      assert value['run']['status'] == run['status']
+                      for scope in ('fixed', 'growing'):
+                          assert value['run'][scope]['total'] == run[scope]['total']
+                          assert value['run'][scope]['finished'] == run[scope]['finished']
+                      assert len(value['rows']) == run['growing']['finished']
+                      assert sum(bool(row['fixed']) for row in value['rows']) == run['fixed']['finished']
           checkpoint_definitions = json.loads(pathlib.Path('site/checkpoint-checks.json').read_text())
           checkpoint_checks = {check['word']: check for check in checkpoint_definitions['checks']}
           runs = sorted(
@@ -202,8 +236,11 @@ jobs:
           print(f'Report history: {total / MiB:.1f} MiB; complete website: {site_bytes / MiB:.1f} MiB')
           PY
       - uses: actions/configure-pages@v5
+        if: steps.report.outputs.current == 'true'
       - uses: actions/upload-pages-artifact@v4
+        if: steps.report.outputs.current == 'true'
         with:
           path: dist
       - uses: actions/deploy-pages@v4
+        if: steps.report.outputs.current == 'true'
         id: deployment

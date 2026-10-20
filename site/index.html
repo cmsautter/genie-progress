@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="description" content="Reproducible progress measurements for the GenieRust Age of Empires II replay simulation.">
-  <title>Genie Replay Lab</title><link rel="stylesheet" href="style.css?v=replay-timing-10">
-  <script src="app.js?v=replay-timing-10" defer></script>
+  <title>Genie Replay Lab</title><link rel="stylesheet" href="style.css?v=consistent-refresh-11">
+  <script src="app.js?v=consistent-refresh-11" defer></script>
 </head>
 <body>
   <header class="topbar"><a class="brand" href="#"><span class="mark">G</span> GENIE <span class="brand-light">REPLAY LAB</span></a><div class="top-links"><a href="https://github.com/librematch/genie">Engine ↗</a><a href="https://github.com/cmsautter/genie-progress">About & source ↗</a><span id="health" class="health">Loading worker status</span></div></header>
@@ -13,6 +13,7 @@
     <section class="controls" aria-label="Dataset and run selection"><div class="tabs" role="group" aria-label="Corpus"><button id="fixed" class="active" aria-pressed="true">Fixed reference <span id="reference-count">5,604</span></button><button id="growing" aria-pressed="false">Growing corpus <span id="catalog-count"></span></button></div><label class="run-select">Engine snapshot <select id="run-select" aria-label="Engine snapshot"></select></label></section>
     <div id="scope-note" class="scope-note"></div>
     <p class="scope-note">Public results update about every five minutes during a run, plus deployment delay. This page checks for updates every minute.</p>
+    <p id="refresh-note" class="scope-note refresh-note" role="status" aria-live="polite" hidden></p>
     <div class="run-strip"><span id="run-state"></span><span id="commit"></span><span id="run-time"></span><button id="provenance" class="text-button">Method & provenance ↗</button></div>
     <div class="progress-track"><div id="run-progress"></div></div>
     <div id="error" class="error" role="status" aria-live="polite" hidden></div>
