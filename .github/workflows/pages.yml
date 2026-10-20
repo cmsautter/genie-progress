@@ -52,7 +52,7 @@ jobs:
               for member in archive:
                   path = pathlib.PurePosixPath(member.name)
                   assert member.isfile() and not path.is_absolute() and '..' not in path.parts
-                  assert str(path) == 'manifest.json' or (len(path.parts) == 2 and path.parts[0] == 'data' and path.suffix == '.json')
+                  assert str(path) == 'manifest.json' or (len(path.parts) == 2 and path.parts[0] in ('data', 'coverage') and path.suffix == '.json')
                   total += member.size
                   if member.size >= MAX_REPORT_BYTES:
                       raise ValueError(f'Report {path} exceeds the 25 MiB file budget ({member.size} bytes)')
@@ -141,6 +141,16 @@ jobs:
               assert isinstance(report['rows'], list) and isinstance(report['identity'], dict)
               # Serve the complete original report, without redirects or a reduced schema.
               shutil.copyfile(source, pathlib.Path('dist') / name)
+              coverage_source = pathlib.Path('dist/coverage') / (run['id'] + '.json')
+              if coverage_source.is_file():
+                  coverage = json.loads(coverage_source.read_bytes())
+                  assert coverage['schema'] == 1
+                  assert coverage['run'] == {'id': run['id'], 'sha': run['sha']}
+                  assert coverage['fixed']['total_recordings'] == run['fixed']['total']
+                  assert coverage['growing']['total_recordings'] == run['growing']['total']
+                  coverage_alias = pathlib.Path('dist') / (name.removesuffix('.json') + '-command-coverage.json')
+                  shutil.copyfile(coverage_source, coverage_alias)
+                  shutil.copyfile(coverage_alias, coverage_alias.with_suffix(''))
               summary = {
                   'schema': 1, 'generated': manifest['generated'],
                   'run': report['run'], 'source_report': 'data/' + run['id'] + '.json',

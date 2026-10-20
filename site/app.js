@@ -14,6 +14,8 @@ let manifest, data, mode = 'fixed', page = 0, selected = '', request = 0, follow
 let manifestRequest=0, detailsReady=false, detailsLoading=false, detailsError='', pendingKey='', detailsController;
 let selectorKey='';
 let chartScale='log',chartOutcome='all',chartSelectorKey='';
+let commandCoverage,commandCoverageState='loading',commandCoverageError='',commandRequest=0,commandController,commandPendingKey='';
+let commandStandard='reviewed',commandShowAll=false;
 const detailsCache=new Map();
 let checkpointDefinitions;
 const openMismatches=new Set();
@@ -152,6 +154,7 @@ async function refresh(){
   } catch(error){$('error').hidden=false;$('error').textContent=error.message;}
 }
 async function loadDetails(run){
+  loadCommandCoverage(run);
   const id=run.id,version=detailsVersion(run);
   if(pendingKey===version){data.run=run;render();return;}
   const current=++request;
@@ -227,7 +230,69 @@ function render(){
   if(r.continuation){prior.href='data/'+encodeURIComponent(r.continuation.run_id)+'.json';prior.textContent='Download the pre-upgrade worker snapshot ('+fmt(r.continuation.preserved_results)+' retained results)';}
   $('download').href='data/'+r.id+'.json';
   const filter=$('status-filter'),keep=filter.value;filter.replaceChildren(new Option('All outcomes','all'));for(const key of Object.keys(s.counts))filter.add(new Option(names[key]||key,key));filter.value=Object.hasOwn(s.counts,keep)?keep:'all';
-  renderCheckpointGroups();renderTable();
+  renderCheckpointGroups();renderCommandCoverage();renderTable();
+}
+async function loadCommandCoverage(run){
+  const version=run.id+'|'+manifest.generated;
+  if(commandPendingKey===version)return;
+  const current=++commandRequest;
+  if(commandController)commandController.abort();commandController=new AbortController();commandPendingKey=version;
+  const same=commandCoverage?.run.id===run.id;
+  if(!same){commandCoverage=undefined;commandShowAll=false;commandCoverageState='loading';}
+  commandCoverageError='';renderCommandCoverage();
+  try{
+    const response=await fetch('coverage/'+encodeURIComponent(run.id)+'.json?v='+encodeURIComponent(manifest.generated),{cache:'no-store',signal:commandController.signal});
+    if(current!==commandRequest||selected!==run.id)return;
+    if(!response.ok){
+      if(response.status===404){commandCoverage=undefined;commandCoverageState='missing';renderCommandCoverage();return;}
+      throw Error('The command census could not be loaded.');
+    }
+    const value=await response.json();
+    if(current!==commandRequest||selected!==run.id)return;
+    if(value.schema!==1||value.run?.id!==run.id||value.run.sha!==run.sha||value.fixed?.total_recordings!==run.fixed.total||value.growing?.total_recordings!==run.growing.total||!Array.isArray(value.fixed.rows)||!Array.isArray(value.growing.rows))throw Error('Command coverage belongs to a different benchmark snapshot.');
+    commandCoverage=value;commandCoverageState='ready';renderCommandCoverage();
+  }catch(error){
+    if(current!==commandRequest||error.name==='AbortError')return;
+    commandCoverageState='error';commandCoverageError=error.message;renderCommandCoverage();
+  }finally{if(current===commandRequest)commandPendingKey='';}
+}
+function renderCommandCoverage(){
+  const value=commandCoverage?.run.id===selected?commandCoverage:undefined,s=value?.[mode];
+  const ready=!!s;$('command-coverage-content').hidden=!ready;
+  const state=$('command-coverage-state');
+  if(!ready){state.textContent=commandCoverageError||(commandCoverageState==='missing'?'Command census queued or not available for this snapshot.':'Loading the full-recording command census…');return;}
+  state.textContent=fmt(s.scanned_recordings)+' / '+fmt(s.total_recordings)+' recordings scanned'+(s.pending_recordings?' · '+fmt(s.pending_recordings)+' pending':'')+(s.unreadable_recordings?' · '+fmt(s.unreadable_recordings)+' unreadable bodies excluded':'');
+  const reviewed=commandStandard==='reviewed',types=s.type_counts.implemented+(reviewed?0:s.type_counts.partial),occurrences=s.occurrence_counts.implemented+(reviewed?0:s.occurrence_counts.partial);
+  const percent=n=>n===null||n===undefined?'—':n.toFixed(n<1?2:1)+'%';
+  $('command-types-label').textContent=reviewed?'VARIANTS WITH REVIEWED HANDLERS':'VARIANTS WITH A HANDLER';
+  $('command-occurrences-label').textContent=reviewed?'OCCURRENCES OF REVIEWED VARIANTS':'OCCURRENCES WITH A HANDLER';
+  $('command-types-percent').textContent=percent(reviewed?s.implemented_types_percent:s.handler_types_percent);
+  $('command-occurrences-percent').textContent=percent(reviewed?s.implemented_occurrences_percent:s.handler_occurrences_percent);
+  $('command-types-count').textContent=fmt(types)+' of '+fmt(s.observed_types)+' observed command variants';
+  $('command-occurrences-count').textContent=fmt(occurrences)+' of '+fmt(s.command_occurrences)+' commands across complete recording bodies';
+  const label={implemented:'Reviewed handler',partial:'Partial / conditional',unsupported:'Unsupported',unknown:'Unknown'};
+  $('command-breakdown').replaceChildren();
+  for(const key of ['implemented','partial','unsupported','unknown']){
+    const item=el('span',label[key]+': '+fmt(s.type_counts[key])+' variants · '+fmt(s.occurrence_counts[key])+' commands','command-state '+key);$('command-breakdown').append(item);
+  }
+  $('command-definition').textContent=reviewed?'Conservative implementation coverage: partial and conditional handlers are excluded. A reviewed handler does not certify later autonomous behaviour or checkpoint correctness.':'Handler presence includes partial and conditional implementations. This is a measure of implemented entry points; execution can still fail.';
+  $('command-census-note').textContent='Counts include the entire recording, including commands beyond the simulation stop. Unknown packets stay in the denominator; unreadable bodies are excluded. Camera, chat and internal unit/AI updates are excluded. '+(!value.classification.available?'Engine capability source is unavailable, so implementation status is unknown. ':'')+'Recorded game build 158041 · parser '+value.parser.key.slice(0,12)+' · updated '+date(value.generated)+'.';
+  const link=$('command-download');link.href='coverage/'+encodeURIComponent(value.run.id)+'.json';link.download='';
+  const filter=$('command-filter').value||'gaps';
+  const rows=s.rows.filter(r=>filter==='all'||filter==='gaps'&&r.status!=='implemented'||r.status===filter);
+  $('command-rows').replaceChildren();
+  for(const row of rows.slice(0,commandShowAll?rows.length:12)){
+    const tr=el('tr'),name=el('td'),title=el('span',row.label);title.title=row.key;name.append(title);
+    const note=el('small',row.reason,'command-reason');
+    if(row.source){const source=el('a',' Source ↗');source.href=row.source;source.target='_blank';source.rel='noopener';note.append(source);}name.append(note);
+    const status=el('td');status.append(el('span',label[row.status]||row.status,'command-state '+row.status));
+    const tail=el('td',row.after_stop_occurrences===null?'—':fmt(row.after_stop_occurrences));
+    tail.title='Known for '+fmt(row.horizon_recordings)+' of '+fmt(row.recordings)+' recordings containing this variant. Counts updates strictly after the first failing update.';
+    tr.append(name,status,el('td',fmt(row.occurrences)),el('td',fmt(row.recordings)),tail);$('command-rows').append(tr);
+  }
+  $('command-row-count').textContent=fmt(rows.length)+' variants · sorted by total occurrences, including the unexecuted tail';
+  $('command-show-all').hidden=rows.length<=12;$('command-show-all').textContent=commandShowAll?'Show top 12':'Show all '+fmt(rows.length);
+  $('command-horizon-note').textContent='“After stop” counts commands in later updates for '+fmt(s.horizon_recordings)+' recordings with comparable simulation horizons. A dash means no comparable horizon is available. It does not predict whether those commands would execute successfully.';
 }
 function countAxis(maximum,scaleType,height){
   const max=Math.max(1,maximum);
@@ -326,4 +391,7 @@ $('provenance').onclick=()=>$('method').showModal();$('close-method').onclick=()
 $('chart-scale').onchange=event=>{chartScale=event.currentTarget.value;if(data)renderCharts(data.run[mode]);};
 $('chart-outcome').onchange=event=>{chartOutcome=event.currentTarget.value;if(data)renderCharts(data.run[mode]);};
 $('chart-outcome').onblur=()=>{if(data&&chartSelectorKey!==JSON.stringify(histogramOutcomes(data.run[mode])))renderCharts(data.run[mode]);};
+$('command-standard').onchange=event=>{commandStandard=event.currentTarget.value;renderCommandCoverage();};
+$('command-filter').onchange=()=>{commandShowAll=false;renderCommandCoverage();};
+$('command-show-all').onclick=()=>{commandShowAll=!commandShowAll;renderCommandCoverage();};
 loadCheckpointDefinitions();refresh();setInterval(refresh,60000);

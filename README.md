@@ -27,6 +27,16 @@ The dashboard distinguishes object positions, combined resources, live object co
 
 The same categories appear in the stopping-summary JSON, with a `checkpoint_word` field. [Checkpoint definitions](https://cmsautter.github.io/genie-progress/checkpoint-checks.json) describe each word for build 158041 and link to the engine implementation. Unknown words, other builds and older reports without details remain explicitly identified. Full report JSON retains the original numeric differences.
 
+### Full-recording command coverage
+
+The command census reads whole recording bodies, including commands beyond the simulation's first stop. Its two percentages show **coverage of distinct recorded command variants** and **coverage weighted by their total occurrence counts**. Both follow the selected engine snapshot and fixed or growing corpus.
+
+The default definition counts reviewed handlers only. **Handler presence, including partial** provides a broader measure of implemented entry points. Partial or conditional implementations, explicit unsupported branches and unknown packets remain separate. A handler does not establish successful execution, checkpoint agreement or complete support for later autonomous mechanics. The reviewed count is deliberately conservative; handlers that have not been reviewed as complete stay partial.
+
+The usage ranking includes the entire recording, with filters for unsupported, partial and unknown variants. GAME subcommands, unit-order actions, stances, remembered selections and farm construction are distinguished. **After stop** counts commands in strictly later updates where a comparable simulation horizon exists; it excludes the failure update itself and is unavailable when no comparable horizon exists. Unknown command packets stay in the denominator. Bodies that cannot be scanned completely are excluded and explicitly counted. Camera, chat, checkpoints and internal unit/AI updates are outside these command metrics.
+
+Use **Download census JSON** for the exact run's counts, classification reasons, source links and parser provenance. The census runs separately and reuses cached recording counts as engine classifications change.
+
 The original historical baseline used local diagnostic instrumentation and is labeled separately. New results are produced by a background benchmark worker and published as static JSON reports. The website does not run game code in visitors' browsers. During a run, new results are published about every five minutes; the page checks for updates every minute. Deployment and caching can add delay.
 
 ## Stable JSON URLs
@@ -42,6 +52,9 @@ The original historical baseline used local diagnostic instrumentation and is la
 | [latest-stopping-simulation.json](https://cmsautter.github.io/genie-progress/latest-stopping-simulation.json) | Ranked stopping reasons for the newest benchmark run. |
 | [latest-completed-stopping-simulation.json](https://cmsautter.github.io/genie-progress/latest-completed-stopping-simulation.json) | Ranked stopping reasons for the newest completed run. |
 | [latest-running-stopping-simulation.json](https://cmsautter.github.io/genie-progress/latest-running-stopping-simulation.json) | Ranked stopping reasons from the newest unfinished run. |
+| [latest-command-coverage.json](https://cmsautter.github.io/genie-progress/latest-command-coverage.json) | Full-recording command coverage and frequency ranking for the newest benchmark run. |
+| [latest-completed-command-coverage.json](https://cmsautter.github.io/genie-progress/latest-completed-command-coverage.json) | Command coverage for the newest completed benchmark run. |
+| [latest-running-command-coverage.json](https://cmsautter.github.io/genie-progress/latest-running-command-coverage.json) | Command coverage for the newest unfinished run, when its census is available. |
 | [manifest.json](https://cmsautter.github.io/genie-progress/manifest.json) | Available runs, summaries and engine commits. |
 
 The three full-report URLs return the original per-run JSON with `run`, `identity` and `rows`, including recording IDs, SHA256 hashes, outcomes and checkpoint counts. They update with each publication; deployment and caching can add delay. Diagnostic pilots and superseded worker continuations are excluded. `latest.json` can also describe a build or setup failure, so check `run.status` before using its results. Completed URLs become available after the first completed run. Running URLs return HTTP 404 when the published snapshot has no unfinished run; they never fall back to completed results.
@@ -51,6 +64,8 @@ Stopping summaries contain `run` metadata, the `source_report` path and separate
 Simulated lists contain compact `run` metadata, `source_report`, `scope`, `count` and `rows`. They select every row with `status == "complete"` across the growing corpus; `fixed` identifies members of the frozen reference. Each entry includes `match_id`, `sha256`, game build, ticks reached, `checkpoints_passed`, `total_checkpoints`, the last matching checkpoint tick and ignored command count. Zero-checkpoint recordings are retained as `0/0`; reaching the end does not establish verified correctness. Rows are sorted by matching checkpoint count descending, then recording ID. These lists also work without `.json`. An available run with no completed recordings returns `count: 0` and an empty `rows` array.
 
 For a reproducible reference, use `run.id` from either report to construct `data/<run.id>.json`. To identify recordings that reached the end with recorded checkpoints matching, select rows with `status == "complete"`, `total_checkpoints > 0` and `checkpoints_passed == total_checkpoints`. Rows without usable checkpoints remain separate, and `ignored_commands_to_stop` records any ignored commands.
+
+Command-coverage responses contain `run`, parser and classification provenance, definitions and separate `fixed` and `growing` summaries. Each summary includes `implemented_types_percent`, `implemented_occurrences_percent`, the two `handler_*_percent` alternatives, four implementation-status counts, scan exclusions and frequency-ranked `rows`. Use `coverage/<run.id>.json` for a particular retained run. These aliases also work without `.json`; unavailable censuses return 404 without substituting a different run. No private per-command position lists or replay payloads are included.
 
 ## Repository contents
 
