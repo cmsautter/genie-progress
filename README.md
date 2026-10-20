@@ -19,6 +19,14 @@ Recordings start from their saved headers. The simulation stops at its first rep
 
 Completed recordings with matching usable checkpoints are separate from recordings without checkpoints. These checkpoints contain partial state checksums; matching them does not establish complete equality of every simulation field or tick. Ignored commands, parse errors, multiple chapters, timeouts and process failures remain visible.
 
+### Changes between engine snapshots
+
+**Changes since the previous snapshot** lists every measured replay whose progress or stopping diagnostics changed. Each row shows ticks reached and checkpoints passed **before and now**, signed deltas, and both stopping reasons. Expand a reason for all reported conditions or checkpoint categories; **Progress details** also shows changed failure ticks, last matching checkpoint ticks, ignored command counts and recording-length metadata.
+
+The comparison uses the most recently completed test of a **different engine commit before the selected run started**. Recordings are paired by identical SHA256 hashes. Newly added or ambiguous recordings and tests still pending are counted separately. Runtime-only differences and diagnostic list ordering do not count as changes. Gains and losses across ticks, matching checkpoints and EOF status are classified as advanced, regressed or mixed; changed recording lengths are labelled separately. Differences in build profile, architecture, game data, instrumentation or resource limits are identified where known.
+
+Use the fixed or growing corpus tabs, search by match ID or stopping reason, filter regressions or EOF transitions, and sort by tick or checkpoint gains/losses. **Download changes JSON** provides the full list for the selected run. Active runs update as more results arrive. A missing earlier retained report is reported explicitly, without substituting an unrelated baseline.
+
 ### Histogram controls
 
 Progress histograms show separate outcome bars in a fixed order, with a shared baseline. Use **Count scale** to switch between logarithmic and linear counts, and **Chart outcome** to inspect one outcome on its own. Log mode uses `log10(count + 1)` to include zero. Hover or keyboard-focus a bucket for its exact outcome counts and total. The selected scale and outcome apply to both progress and tick histograms.
@@ -59,6 +67,9 @@ The original historical baseline used local diagnostic instrumentation and is la
 | [latest-command-coverage.json](https://cmsautter.github.io/genie-progress/latest-command-coverage.json) | Full-recording command coverage and frequency ranking for the newest benchmark run. |
 | [latest-completed-command-coverage.json](https://cmsautter.github.io/genie-progress/latest-completed-command-coverage.json) | Command coverage for the newest completed benchmark run. |
 | [latest-running-command-coverage.json](https://cmsautter.github.io/genie-progress/latest-running-command-coverage.json) | Command coverage for the newest unfinished run, when its census is available. |
+| [latest-changes.json](https://cmsautter.github.io/genie-progress/latest-changes.json) | Replay changes for the newest run versus its preceding completed engine revision. |
+| [latest-completed-changes.json](https://cmsautter.github.io/genie-progress/latest-completed-changes.json) | Replay changes for the newest completed run. |
+| [latest-running-changes.json](https://cmsautter.github.io/genie-progress/latest-running-changes.json) | Changes measured so far in the newest unfinished run. |
 | [manifest.json](https://cmsautter.github.io/genie-progress/manifest.json) | Available runs, summaries and engine commits. |
 
 The three full-report URLs return the original per-run JSON with `run`, `identity` and `rows`, including recording IDs, SHA256 hashes, outcomes and checkpoint counts. They update with each publication; deployment and caching can add delay. Diagnostic pilots and superseded worker continuations are excluded. `latest.json` can also describe a build or setup failure, so check `run.status` before using its results. Completed URLs become available after the first completed run. Running URLs return HTTP 404 when the published snapshot has no unfinished run; they never fall back to completed results.
@@ -70,6 +81,8 @@ Simulated lists contain compact `run` metadata, `source_report`, `scope`, `count
 For a reproducible reference, use `run.id` from either report to construct `data/<run.id>.json`. To identify recordings that reached the end with recorded checkpoints matching, select rows with `status == "complete"`, `total_checkpoints > 0` and `checkpoints_passed == total_checkpoints`. Rows without usable checkpoints remain separate, and `ignored_commands_to_stop` records any ignored commands.
 
 Command-coverage responses contain `run`, parser and classification provenance, definitions and separate `fixed` and `growing` summaries. Each summary includes `implemented_types_percent`, `implemented_occurrences_percent`, the two `handler_*_percent` alternatives, four implementation-status counts, scan exclusions and frequency-ranked `rows`. Use `coverage/<run.id>.json` for a particular retained run. These aliases also work without `.json`; unavailable censuses return 404 without substituting a different run. No private per-command position lists or replay payloads are included.
+
+Replay-change responses contain current and baseline provenance, `fixed` and `growing` counts, and one `rows` array of changed recordings. Rows include SHA256, corpus membership, before/after counters and stopping diagnostics, `ticks_delta`, `checkpoints_delta`, the change category and EOF flags. `fixed` on a row identifies reference-set membership. Missing counters have null deltas. Use `changes/<run.id>.json` for a particular retained run; the three aliases also work without `.json`. Reports without an available baseline return `available: false` with a reason and an empty list. Running aliases return 404 when no run is active.
 
 ## Repository contents
 

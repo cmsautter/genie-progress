@@ -52,7 +52,7 @@ jobs:
               for member in archive:
                   path = pathlib.PurePosixPath(member.name)
                   assert member.isfile() and not path.is_absolute() and '..' not in path.parts
-                  assert str(path) == 'manifest.json' or (len(path.parts) == 2 and path.parts[0] in ('data', 'coverage') and path.suffix == '.json')
+                  assert str(path) == 'manifest.json' or (len(path.parts) == 2 and path.parts[0] in ('data', 'coverage', 'changes') and path.suffix == '.json')
                   total += member.size
                   if member.size >= MAX_REPORT_BYTES:
                       raise ValueError(f'Report {path} exceeds the 25 MiB file budget ({member.size} bytes)')
@@ -141,6 +141,17 @@ jobs:
               assert isinstance(report['rows'], list) and isinstance(report['identity'], dict)
               # Serve the complete original report, without redirects or a reduced schema.
               shutil.copyfile(source, pathlib.Path('dist') / name)
+              changes_source = pathlib.Path('dist/changes') / (run['id'] + '.json')
+              if changes_source.is_file():
+                  changes = json.loads(changes_source.read_bytes())
+                  assert changes['schema'] == 1
+                  assert changes['run']['id'] == run['id'] and changes['run']['sha'] == run['sha']
+                  if changes.get('available'):
+                      assert changes['fixed']['total_recordings'] == run['fixed']['total']
+                      assert changes['growing']['total_recordings'] == run['growing']['total']
+                  changes_alias = pathlib.Path('dist') / (name.removesuffix('.json') + '-changes.json')
+                  shutil.copyfile(changes_source, changes_alias)
+                  shutil.copyfile(changes_alias, changes_alias.with_suffix(''))
               coverage_source = pathlib.Path('dist/coverage') / (run['id'] + '.json')
               if coverage_source.is_file():
                   coverage = json.loads(coverage_source.read_bytes())

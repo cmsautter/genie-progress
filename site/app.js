@@ -16,6 +16,8 @@ let selectorKey='';
 let chartScale='log',chartOutcome='all',chartSelectorKey='';
 let commandCoverage,commandCoverageState='loading',commandCoverageError='',commandRequest=0,commandController,commandPendingKey='';
 let commandStandard='reviewed',commandShowAll=false;
+let replayChanges,changesError='',changesLoading=false,changesRequest=0,changesController,changesPendingKey='',changesPage=0;
+const changesCache=new Map();
 const detailsCache=new Map();
 let checkpointDefinitions;
 const openMismatches=new Set();
@@ -155,6 +157,7 @@ async function refresh(){
 }
 async function loadDetails(run){
   loadCommandCoverage(run);
+  loadReplayChanges(run);
   const id=run.id,version=detailsVersion(run);
   if(pendingKey===version){data.run=run;render();return;}
   const current=++request;
@@ -230,7 +233,80 @@ function render(){
   if(r.continuation){prior.href='data/'+encodeURIComponent(r.continuation.run_id)+'.json';prior.textContent='Download the pre-upgrade worker snapshot ('+fmt(r.continuation.preserved_results)+' retained results)';}
   $('download').href='data/'+r.id+'.json';
   const filter=$('status-filter'),keep=filter.value;filter.replaceChildren(new Option('All outcomes','all'));for(const key of Object.keys(s.counts))filter.add(new Option(names[key]||key,key));filter.value=Object.hasOwn(s.counts,keep)?keep:'all';
-  renderCheckpointGroups();renderCommandCoverage();renderTable();
+  renderCheckpointGroups();renderCommandCoverage();renderReplayChanges();renderTable();
+}
+async function loadReplayChanges(run){
+  const version=run.changes?.version||detailsVersion(run),key=run.id+'|'+version;
+  if(changesPendingKey===key)return;
+  const current=++changesRequest;
+  changesController?.abort();changesController=new AbortController();
+  changesError='';
+  if(replayChanges?.run.id!==run.id){replayChanges=undefined;changesPage=0;}
+  const cached=changesCache.get(run.id);
+  if(cached?.version===version){replayChanges=cached.value;changesLoading=false;changesPendingKey='';renderReplayChanges();return;}
+  changesLoading=true;changesPendingKey=key;renderReplayChanges();
+  try{
+    const response=await fetch('changes/'+encodeURIComponent(run.id)+'.json?v='+encodeURIComponent(version),{cache:'no-store',signal:changesController.signal});
+    if(!response.ok)throw Error(response.status===404?'Replay comparison is not available in this published snapshot yet.':'Replay comparison could not be loaded.');
+    const value=await response.json();
+    if(current!==changesRequest||selected!==run.id)return;
+    if(value.schema!==1||value.run?.id!==run.id||value.run.sha!==run.sha||!Array.isArray(value.rows)
+      ||(value.available&&(value.fixed?.total_recordings!==run.fixed.total||value.growing?.total_recordings!==run.growing.total))
+      ||(run.changes&&value.baseline?.id!==(run.changes.baseline_id||undefined)))throw Error('Replay comparison belongs to a different benchmark snapshot.');
+    changesCache.delete(run.id);changesCache.set(run.id,{version,value});
+    while(changesCache.size>3)changesCache.delete(changesCache.keys().next().value);
+    replayChanges=value;
+  }catch(error){if(current===changesRequest&&error.name!=='AbortError')changesError=error.message;}
+  finally{if(current===changesRequest){changesLoading=false;changesPendingKey='';renderReplayChanges();}}
+}
+function signed(n){return n===null||n===undefined?'—':(n>0?'+':'')+fmt(n);}
+function changeStop(stop){
+  const cell=el('td'),detail=el('details'),extra=[...stop.checks.map(c=>c.label),...stop.reasons];
+  const title=stop.label+(extra.length?' · '+extra[0]:'')+(extra.length>1?' (+'+(extra.length-1)+' more)':'');
+  detail.append(el('summary',title));
+  for(const text of extra)detail.append(el('p',text,'change-reason'));
+  if(!extra.length)detail.append(el('p',stop.status==='complete'?'Playback reached the end; checkpoint counts are shown separately.':'No additional stopping diagnostics were recorded.','change-reason'));
+  cell.append(detail);return cell;
+}
+function renderReplayChanges(){
+  const value=replayChanges?.run.id===selected?replayChanges:undefined,s=value?.[mode];
+  $('changes-content').hidden=!value?.available;
+  $('changes-download').hidden=!value?.available;
+  const state=$('changes-state');
+  if(!value){state.textContent=changesError||'Loading changes against the previous completed engine snapshot…';return;}
+  if(!value.available){state.textContent=value.reason;return;}
+  const link=el('a',value.baseline.sha.slice(0,12));link.href='https://github.com/librematch/genie/commit/'+value.baseline.sha;link.target='_blank';link.rel='noopener';
+  state.replaceChildren(document.createTextNode('Compared with '),link,document.createTextNode(' · completed '+date(value.baseline.finished||value.baseline.created)+(changesLoading?' · updating…':'')+(changesError?' · '+changesError:'')));
+  for(const [id,count] of [['changes-total',s.changed_recordings],['changes-advanced',s.advanced],['changes-regressed',s.regressed],['changes-other',s.mixed+s.changed+s.measurement]])$(id).textContent=fmt(count);
+  $('changes-scope').textContent=fmt(s.compared_recordings)+' identical recordings compared · '+fmt(s.unchanged_recordings)+' unchanged · '+fmt(s.unpaired_recordings)+' measured recordings without a unique previous hash match · '+fmt(s.pending_recordings)+' not tested yet. '+fmt(s.new_eof)+' newly reached EOF · '+fmt(s.lost_eof)+' no longer reach EOF.';
+  $('changes-warnings').textContent=value.warnings.join(' ');$('changes-warnings').hidden=!value.warnings.length;
+  $('changes-download').href='changes/'+encodeURIComponent(value.run.id)+'.json';
+  const term=$('changes-search').value.toLowerCase(),filter=$('changes-filter').value||'all',sort=$('changes-sort').value||'ticks-absolute';
+  let rows=value.rows.filter(r=>(mode==='growing'||r.fixed)&&(filter==='all'||r.kind===filter||(filter==='stops'&&r.stop_changed)||(filter==='new-eof'&&r.new_eof)||(filter==='lost-eof'&&r.lost_eof)));
+  if(term)rows=rows.filter(r=>JSON.stringify([r.match_id,r.before.match_id,r.before.stop,r.after.stop]).toLowerCase().includes(term));
+  const metric=r=>sort==='ticks-gain'?(r.ticks_delta??-Infinity):sort==='ticks-loss'?-(r.ticks_delta??Infinity):sort==='checkpoints-gain'?(r.checkpoints_delta??-Infinity):sort==='checkpoints-loss'?-(r.checkpoints_delta??Infinity):Math.abs(r.ticks_delta||0);
+  rows.sort((a,b)=>(sort==='id'?0:metric(b)-metric(a))||a.match_id.localeCompare(b.match_id));
+  const pages=Math.max(1,Math.ceil(rows.length/25));changesPage=Math.max(0,Math.min(changesPage,pages-1));
+  const labels={advanced:'Advanced',regressed:'Regressed',mixed:'Mixed',changed:'Other change',measurement:'Length metadata changed'};
+  $('changes-rows').replaceChildren();
+  for(const row of rows.slice(changesPage*25,(changesPage+1)*25)){
+    const tr=el('tr'),match=el('td');match.append(recordingLink(row));match.title='SHA256 '+row.sha256;
+    if(row.before.match_id!==row.match_id)match.append(el('small','Previously '+row.before.match_id));
+    const kind=el('td');kind.append(el('span',labels[row.kind],'change-kind '+row.kind));
+    if(row.new_eof||row.lost_eof)kind.append(el('small',row.new_eof?'New EOF':'Lost EOF'));
+    if(row.diagnostics_changed&&!row.stop_changed)kind.append(el('small','Diagnostic values changed'));
+    const ticks=el('td'),checkpoints=el('td');
+    ticks.append(el('span',fmt(row.before.completed_ticks)+' → '+fmt(row.after.completed_ticks)),el('strong',signed(row.ticks_delta),'delta '+(row.ticks_delta>0?'positive':row.ticks_delta<0?'negative':'')));
+    checkpoints.append(el('span',fmt(row.before.checkpoints_passed)+' → '+fmt(row.after.checkpoints_passed)),el('strong',signed(row.checkpoints_delta),'delta '+(row.checkpoints_delta>0?'positive':row.checkpoints_delta<0?'negative':'')));
+    checkpoints.title='Matching checkpoints: '+fmt(row.before.checkpoints_passed)+' / '+fmt(row.before.total_checkpoints)+' previously; '+fmt(row.after.checkpoints_passed)+' / '+fmt(row.after.total_checkpoints)+' now.';
+    const details=[];
+    for(const [key,label] of [['first_failure_tick','Failure tick'],['last_matching_checkpoint_tick','Last matching checkpoint tick'],['ignored_commands_to_stop','Ignored commands'],['total_ticks','Recording ticks'],['total_checkpoints','Recorded checkpoints']])
+      if(row.fields_changed.includes(key))details.push(label+': '+fmt(row.before[key])+' → '+fmt(row.after[key]));
+    if(details.length){const extra=el('details',undefined,'change-extra');extra.append(el('summary','Progress details'));for(const line of details)extra.append(el('p',line));kind.append(extra);}
+    tr.append(match,kind,ticks,checkpoints,changeStop(row.before.stop),changeStop(row.after.stop));$('changes-rows').append(tr);
+  }
+  $('changes-row-count').textContent=fmt(rows.length)+' changed recordings'+(!rows.length?' · no changes for this selection':'');
+  $('changes-page').textContent=(changesPage+1)+' / '+pages;$('changes-previous').disabled=changesPage===0;$('changes-next').disabled=changesPage===pages-1;
 }
 async function loadCommandCoverage(run){
   const version=run.id+'|'+manifest.generated;
@@ -380,7 +456,7 @@ function renderTable(){
   }
   $('row-count').textContent=fmt(rows.length)+' matching recordings';$('page-number').textContent=(page+1)+' / '+pages;$('previous').disabled=page===0;$('next').disabled=page===pages-1;
 }
-for(const key of ['fixed','growing'])$(key).onclick=()=>{mode=key;page=0;render();};
+for(const key of ['fixed','growing'])$(key).onclick=()=>{mode=key;page=0;changesPage=0;render();};
 const showLoadError=error=>{$('error').hidden=false;$('error').textContent=error.message;};
 $('run-select').onchange=event=>{const pending=selectSnapshot(event.currentTarget.value);if(pending)pending.catch(showLoadError);};
 $('run-select').onblur=()=>{if(manifest)syncSelector(visibleRuns(manifest.runs),true);};
@@ -394,4 +470,7 @@ $('chart-outcome').onblur=()=>{if(data&&chartSelectorKey!==JSON.stringify(histog
 $('command-standard').onchange=event=>{commandStandard=event.currentTarget.value;renderCommandCoverage();};
 $('command-filter').onchange=()=>{commandShowAll=false;renderCommandCoverage();};
 $('command-show-all').onclick=()=>{commandShowAll=!commandShowAll;renderCommandCoverage();};
+for(const id of ['changes-search','changes-filter','changes-sort'])$(id).addEventListener('input',()=>{changesPage=0;renderReplayChanges();});
+$('changes-previous').onclick=()=>{changesPage--;renderReplayChanges();};
+$('changes-next').onclick=()=>{changesPage++;renderReplayChanges();};
 loadCheckpointDefinitions();refresh();setInterval(refresh,60000);
