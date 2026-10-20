@@ -518,13 +518,18 @@ function renderTable(){
   if(!data)return;let rows=data.rows.filter(r=>mode==='growing'||r.fixed);const term=$('search').value.toLowerCase(),filter=$('status-filter').value;
   rows=rows.filter(r=>(filter==='all'||outcome(r)===filter)&&(!term||r.match_id.toLowerCase().includes(term)||JSON.stringify([r.unsupported,r.reason,r.differences,r.status==='checkpoint_mismatch'?checkpointReason(r):'']).toLowerCase().includes(term)));
   const progress=r=>r.total_ticks?100*(r.completed_ticks||0)/r.total_ticks:-1;
+  const ticks=r=>Number.isFinite(r.completed_ticks)&&r.completed_ticks>=0?r.completed_ticks:-1;
   const sort=$('sort').value;
   rows.sort((a,b)=>{
     let order=0;
     if(sort==='time-desc'||sort==='time-asc'){
       const left=elapsedSeconds(a.runtime_seconds),right=elapsedSeconds(b.runtime_seconds);
       order=left===null?(right===null?0:1):right===null?-1:(sort==='time-asc'?1:-1)*(left-right);
-    }else if(sort!=='id')order=(sort==='progress-asc'?1:-1)*(progress(a)-progress(b));
+    }else if(sort==='ticks-desc')order=ticks(b)-ticks(a);
+    else if(sort!=='id'){
+      order=(sort==='progress-asc'?1:-1)*(progress(a)-progress(b));
+      if(sort==='progress-desc'&&!order)order=ticks(b)-ticks(a);
+    }
     return order||a.match_id.localeCompare(b.match_id);
   });
   const pages=Math.max(1,Math.ceil(rows.length/30));page=Math.max(0,Math.min(page,pages-1));$('rows').replaceChildren();
