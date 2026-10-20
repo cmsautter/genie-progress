@@ -490,7 +490,7 @@ function chart(id,buckets){
   node('desc',{},'Recording counts by progress bucket. Separate bars have a common zero baseline, in a fixed outcome order. '+(chartScale==='log'?'Count axis uses log base 10 of count plus one.':'Count axis is linear.'));
   for(const tick of axis.ticks){
     const y=baseline-axis.scale(tick);
-    node('line',{x1:L,y1:y,x2:W-R,y2:y,stroke:'#243148','stroke-dasharray':tick?'3 4':'none'});
+    node('line',{x1:L,y1:y,x2:W-R,y2:y,style:'stroke:var(--line-soft)','stroke-dasharray':tick?'3 4':'none'});
     node('text',{x:L-7,y:y+3,'text-anchor':'end'},fmt(tick));
   }
   const readout=$(id+'-readout');readout.textContent='Hover or focus a bucket to inspect its counts.';
@@ -563,6 +563,8 @@ $('run-select').onblur=()=>{if(manifest)syncSelector(visibleRuns(manifest.runs),
 $('retry-details').onclick=()=>{detailsCache.delete(selected);loadDetails(manifest.runs.find(r=>r.id===selected)).catch(showLoadError);};
 for(const id of ['search','status-filter','sort'])$(id).addEventListener('input',()=>{page=0;renderTable();});
 $('previous').onclick=()=>{page--;renderTable();};$('next').onclick=()=>{page++;renderTable();};
+function showTheme(){const light=document.documentElement.dataset.theme==='light';$('theme-toggle').textContent=light?'Dark theme':'Light theme';$('theme-toggle').setAttribute('aria-pressed',String(light));}
+$('theme-toggle').onclick=()=>{const next=document.documentElement.dataset.theme==='light'?'dark':'light';document.documentElement.dataset.theme=next;try{localStorage.setItem('genie-theme',next);}catch{}showTheme();};showTheme();
 $('provenance').onclick=()=>$('method').showModal();$('close-method').onclick=()=>$('method').close();
 $('chart-scale').onchange=event=>{chartScale=event.currentTarget.value;if(data)renderCharts(data.run[mode]);};
 $('chart-outcome').onchange=event=>{chartOutcome=event.currentTarget.value;if(data)renderCharts(data.run[mode]);};
