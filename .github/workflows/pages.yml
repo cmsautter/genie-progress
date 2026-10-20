@@ -64,6 +64,8 @@ jobs:
                   target.parent.mkdir(parents=True, exist_ok=True)
                   target.write_bytes(data)
           manifest = json.loads(pathlib.Path('dist/manifest.json').read_text())
+          checkpoint_definitions = json.loads(pathlib.Path('site/checkpoint-checks.json').read_text())
+          checkpoint_checks = {check['word']: check for check in checkpoint_definitions['checks']}
           runs = sorted(
               (run for run in manifest['runs'] if not run.get('pilot') and run['status'] != 'continued'),
               key=lambda run: datetime.datetime.fromisoformat(run['created']), reverse=True,
@@ -71,6 +73,7 @@ jobs:
           def stopping_reasons(rows, total):
               outcomes = Counter(row['status'] for row in rows)
               groups = defaultdict(set)
+              checkpoint_words = {}
               labels = {
                   'unsupported': 'Unsupported update',
                   'initialization_unsupported': 'Unsupported initialization',
@@ -94,6 +97,14 @@ jobs:
                       for item in [condition, *condition.get('freezes', [])]:
                           if item.get('reason'):
                               reasons.add(str(item['reason']))
+                  if status == 'checkpoint_mismatch':
+                      for difference in row.get('differences', []):
+                          word = difference.get('word')
+                          check = checkpoint_checks.get(word) if row.get('build') == checkpoint_definitions['build'] else None
+                          label = check['label'] if check else f'Checkpoint word {word}'
+                          reason = 'Checkpoint mismatch: ' + label
+                          reasons.add(reason)
+                          checkpoint_words[(status, reason)] = word
                   if not reasons:
                       reasons.add(str(row.get('reason') or row.get('error') or labels.get(status, status)))
                   for reason in reasons:
@@ -108,7 +119,9 @@ jobs:
                   'reasons': [
                       {'status': status, 'reason': reason, 'count': len(ids),
                        'percent_of_stopped': round(100 * len(ids) / stopped, 2),
-                       'examples': sorted(ids)[:5]}
+                       'examples': sorted(ids)[:5],
+                       **({'checkpoint_word': checkpoint_words[(status, reason)]}
+                          if (status, reason) in checkpoint_words else {})}
                       for (status, reason), ids in sorted(groups.items(), key=lambda item: (-len(item[1]), *item[0]))
                   ],
               }
@@ -132,7 +145,9 @@ jobs:
                   'schema': 1, 'generated': manifest['generated'],
                   'run': report['run'], 'source_report': 'data/' + run['id'] + '.json',
                   'counting': 'Distinct recordings per reported condition at their first stopping point. '
+                              'Checkpoint mismatches are grouped by differing check, not by inferred cause. '
                               'A recording can report multiple conditions, so reason counts can overlap.',
+                  'checkpoint_definitions': 'checkpoint-checks.json',
                   'fixed': stopping_reasons([row for row in report['rows'] if row['fixed']], report['run']['fixed']['total']),
                   'growing': stopping_reasons(report['rows'], report['run']['growing']['total']),
               }

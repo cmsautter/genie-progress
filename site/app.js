@@ -9,7 +9,69 @@ let manifest, data, mode = 'fixed', page = 0, selected = '', request = 0, follow
 let manifestRequest=0, detailsReady=false, detailsLoading=false, detailsError='', pendingKey='', detailsController;
 let selectorKey='';
 const detailsCache=new Map();
+let checkpointDefinitions;
+const openMismatches=new Set();
 function el(tag, text, cls){const n=document.createElement(tag);if(text!==undefined)n.textContent=text;if(cls)n.className=cls;return n;}
+async function loadCheckpointDefinitions(){
+  try{
+    const response=await fetch('checkpoint-checks.json',{cache:'no-cache'});
+    if(!response.ok)return;
+    const value=await response.json();
+    if(value.build!==158041||value.word_index_base!==0||!Array.isArray(value.checks))return;
+    checkpointDefinitions=value;
+    if(detailsReady){renderCheckpointGroups();renderTable();}
+  }catch{/* Raw word numbers remain available when the category file cannot be loaded. */}
+}
+function checkpointCheck(row,word){
+  return (checkpointDefinitions&&row.build===checkpointDefinitions.build&&checkpointDefinitions.checks.find(check=>check.word===word))
+    ||{word,label:'Checkpoint word '+word,description:'No verified category mapping is available for this build and word.'};
+}
+function checkpointCategories(row){
+  return [...new Set((row.differences||[]).map(d=>d.word))].sort((a,b)=>a-b).map(word=>checkpointCheck(row,word));
+}
+function checkpointReason(row){
+  const categories=checkpointCategories(row);
+  return 'Mismatch at update '+fmt(row.first_failure_tick)+(categories.length?' · '+categories.map(check=>check.label).join('; '):' · check details unavailable');
+}
+function checkpointDetails(row){
+  const details=el('details',undefined,'checkpoint-details'),key=data.run.id+':'+row.match_id;
+  details.open=openMismatches.has(key);
+  details.addEventListener('toggle',()=>{if(details.open)openMismatches.add(key);else openMismatches.delete(key);});
+  details.append(el('summary',checkpointReason(row)));
+  details.append(el('p',row.checkpoints_passed?'Last matching checkpoint: update '+fmt(row.last_matching_checkpoint_tick)+'.':'No earlier recorded checkpoint matched.','chart-note'));
+  details.append(el('p','These are aggregate checks. They identify the differing category, not a particular object or the update where divergence began. Sums wrap at 32 bits.','chart-note'));
+  if(row.differences?.length){
+    const table=el('table',undefined,'checkpoint-values'),head=el('thead'),heading=el('tr');
+    for(const text of ['Player','Check (zero-based word)','Recorded','Simulated'])heading.append(el('th',text));
+    head.append(heading);table.append(head);const body=el('tbody');
+    for(const difference of row.differences){
+      const check=checkpointCheck(row,difference.word),tr=el('tr'),label=el('td',check.label+' ('+difference.word+')');
+      label.title=check.description;
+      tr.append(el('td',difference.player===0?'Gaia (0)':'Player '+difference.player),label,el('td',fmt(difference.recorded)),el('td',fmt(difference.simulated)));body.append(tr);
+    }
+    table.append(body);details.append(table);
+  }
+  if(row.ignored_commands_to_stop)details.append(el('p',fmt(row.ignored_commands_to_stop)+' ignored command packets before this checkpoint.','chart-note'));
+  return details;
+}
+function renderCheckpointGroups(){
+  const groups=new Map(),rows=detailsReady?data.rows.filter(r=>r.status==='checkpoint_mismatch'&&(mode==='growing'||r.fixed)):[];
+  for(const row of rows){
+    const checks=checkpointCategories(row);
+    for(const check of checks.length?checks:[{word:null,label:'Check details unavailable'}]){
+      const group=groups.get(check.label)||{...check,ids:new Set()};group.ids.add(row.match_id);groups.set(check.label,group);
+    }
+  }
+  $('checkpoint-panel').hidden=!detailsReady||!rows.length;
+  $('checkpoint-count').textContent=fmt(rows.length)+(rows.length===1?' recording':' recordings');$('checkpoint-groups').replaceChildren();
+  const ranked=[...groups.values()].sort((a,b)=>b.ids.size-a.ids.size||a.word-b.word);
+  for(const group of ranked){
+    const item=el('div'),button=el('button',undefined,'checkpoint-group'),track=el('div',undefined,'blocker-track'),fill=el('div');
+    button.type='button';button.append(el('span',group.label),el('strong',fmt(group.ids.size)));button.title=group.description||group.label;
+    button.onclick=()=>{$('status-filter').value='checkpoint_mismatch';$('search').value=group.word===null?'check details unavailable':group.label;page=0;renderTable();};
+    fill.style.width=100*group.ids.size/Math.max(1,ranked[0].ids.size)+'%';track.append(fill);item.append(button,track);$('checkpoint-groups').append(item);
+  }
+}
 function recordingLink(r){
   if(/^\d+$/.test(r.match_id)){
     const link=el('a',r.match_id);link.href='https://www.aoe2insights.com/match/'+r.match_id+'/';link.target='_blank';link.rel='noopener';return link;
@@ -159,7 +221,7 @@ function render(){
   if(r.continuation){prior.href='data/'+encodeURIComponent(r.continuation.run_id)+'.json';prior.textContent='Download the pre-upgrade worker snapshot ('+fmt(r.continuation.preserved_results)+' retained results)';}
   $('download').href='data/'+r.id+'.json';
   const filter=$('status-filter'),keep=filter.value;filter.replaceChildren(new Option('All outcomes','all'));for(const key of Object.keys(s.counts))filter.add(new Option(names[key]||key,key));filter.value=Object.hasOwn(s.counts,keep)?keep:'all';
-  renderTable();
+  renderCheckpointGroups();renderTable();
 }
 function chart(id,buckets){
   const W=620,H=id==='ticks-chart'?200:265,L=35,R=10,T=14,B=52,plotH=H-T-B,plotW=W-L-R;
@@ -174,11 +236,27 @@ function chart(id,buckets){
 function renderTable(){
   if(!detailsReady){$('rows').replaceChildren();$('row-count').textContent=detailsError?'Recording details unavailable':'Loading recording details…';$('page-number').textContent='—';$('previous').disabled=true;$('next').disabled=true;return;}
   if(!data)return;let rows=data.rows.filter(r=>mode==='growing'||r.fixed);const term=$('search').value.toLowerCase(),filter=$('status-filter').value;
-  rows=rows.filter(r=>(filter==='all'||outcome(r)===filter)&&(!term||r.match_id.toLowerCase().includes(term)||JSON.stringify(r.unsupported||r.reason||r.differences||'').toLowerCase().includes(term)));
+  rows=rows.filter(r=>(filter==='all'||outcome(r)===filter)&&(!term||r.match_id.toLowerCase().includes(term)||JSON.stringify([r.unsupported,r.reason,r.differences,r.status==='checkpoint_mismatch'?checkpointReason(r):'']).toLowerCase().includes(term)));
   const progress=r=>r.total_ticks?100*(r.completed_ticks||0)/r.total_ticks:-1;
   rows.sort((a,b)=>$('sort').value==='id'?a.match_id.localeCompare(b.match_id):($('sort').value==='progress-asc'?1:-1)*(progress(a)-progress(b))||a.match_id.localeCompare(b.match_id));
   const pages=Math.max(1,Math.ceil(rows.length/30));page=Math.max(0,Math.min(page,pages-1));$('rows').replaceChildren();
-  for(const r of rows.slice(page*30,(page+1)*30)){const tr=el('tr'),link=recordingLink(r);const first=el('td');first.append(link);const status=el('td'),badge=el('span',names[outcome(r)]||r.status,'badge');badge.style.setProperty('--badge',color(outcome(r)));status.append(badge);const ticks=el('td',r.total_ticks===undefined?'—':fmt(r.completed_ticks||0)+' / '+fmt(r.total_ticks));const percent=el('td');const meter=el('span',progress(r)<0?'—':progress(r).toFixed(2)+'%','micro-progress');meter.style.setProperty('--percent',Math.max(0,progress(r))+'%');percent.append(meter);const checkpoint=el('td',r.total_checkpoints===undefined?'—':fmt(r.checkpoints_passed||0)+' / '+fmt(r.total_checkpoints));if(r.ignored_commands_to_stop)checkpoint.title=r.ignored_commands_to_stop+' ignored command packets before stop';let reason=r.unsupported?.map(v=>v.reason).join('; ')||r.reason||'';if(r.status==='checkpoint_mismatch')reason='Mismatch after update '+fmt(r.first_failure_tick)+' · words '+[...new Set((r.differences||[]).map(d=>d.word))].join(', ');if(r.status==='complete')reason=r.checkpoints_passed?'All usable recorded checkpoints matched.':'No usable recorded checkpoints.';if(r.ignored_commands_to_stop)reason+=' '+fmt(r.ignored_commands_to_stop)+' ignored command packets.';tr.append(first,status,ticks,percent,checkpoint,el('td',reason));$('rows').append(tr);}
+  for(const r of rows.slice(page*30,(page+1)*30)){
+    const tr=el('tr'),first=el('td');first.append(recordingLink(r));
+    const status=el('td'),badge=el('span',names[outcome(r)]||r.status,'badge');badge.style.setProperty('--badge',color(outcome(r)));status.append(badge);
+    const ticks=el('td',r.total_ticks===undefined?'—':fmt(r.completed_ticks||0)+' / '+fmt(r.total_ticks)),percent=el('td');
+    const meter=el('span',progress(r)<0?'—':progress(r).toFixed(2)+'%','micro-progress');meter.style.setProperty('--percent',Math.max(0,progress(r))+'%');percent.append(meter);
+    const checkpoint=el('td',r.total_checkpoints===undefined?'—':fmt(r.checkpoints_passed||0)+' / '+fmt(r.total_checkpoints));
+    if(r.ignored_commands_to_stop)checkpoint.title=r.ignored_commands_to_stop+' ignored command packets before stop';
+    const diagnostic=el('td');
+    if(r.status==='checkpoint_mismatch')diagnostic.append(checkpointDetails(r));
+    else{
+      let reason=r.unsupported?.map(v=>v.reason).join('; ')||r.reason||'';
+      if(r.status==='complete')reason=r.checkpoints_passed?'All usable recorded checkpoints matched.':'No usable recorded checkpoints.';
+      if(r.ignored_commands_to_stop)reason+=' '+fmt(r.ignored_commands_to_stop)+' ignored command packets.';
+      diagnostic.textContent=reason;
+    }
+    tr.append(first,status,ticks,percent,checkpoint,diagnostic);$('rows').append(tr);
+  }
   $('row-count').textContent=fmt(rows.length)+' matching recordings';$('page-number').textContent=(page+1)+' / '+pages;$('previous').disabled=page===0;$('next').disabled=page===pages-1;
 }
 for(const key of ['fixed','growing'])$(key).onclick=()=>{mode=key;page=0;render();};
@@ -189,4 +267,4 @@ $('retry-details').onclick=()=>{detailsCache.delete(selected);loadDetails(manife
 for(const id of ['search','status-filter','sort'])$(id).addEventListener('input',()=>{page=0;renderTable();});
 $('previous').onclick=()=>{page--;renderTable();};$('next').onclick=()=>{page++;renderTable();};
 $('provenance').onclick=()=>$('method').showModal();$('close-method').onclick=()=>$('method').close();
-refresh();setInterval(refresh,60000);
+loadCheckpointDefinitions();refresh();setInterval(refresh,60000);

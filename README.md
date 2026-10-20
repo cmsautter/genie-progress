@@ -17,6 +17,12 @@ Recordings start from their saved headers. The simulation stops at its first rep
 
 Completed recordings with matching usable checkpoints are separate from recordings without checkpoints. These checkpoints contain partial state checksums; matching them does not establish complete equality of every simulation field or tick. Ignored commands, parse errors, multiple chapters, timeouts and process failures remain visible.
 
+### Checkpoint mismatch categories
+
+The dashboard distinguishes object positions, combined resources, live object counts, actions/unit AI and the other recorded checks. The category overview counts affected recordings; selecting a category filters the table. Expand a mismatch to see the affected players, zero-based checkpoint words, and recorded versus simulated values. A recording can fail several checks. These aggregate checks help locate the differing state without establishing its exact cause.
+
+The same categories appear in the stopping-summary JSON, with a `checkpoint_word` field. [Checkpoint definitions](https://cmsautter.github.io/genie-progress/checkpoint-checks.json) describe each word for build 158041 and link to the engine implementation. Unknown words, other builds and older reports without details remain explicitly identified. Full report JSON retains the original numeric differences.
+
 The original historical baseline used local diagnostic instrumentation and is labeled separately. New results are produced by a background benchmark worker and published as static JSON reports. The website does not run game code in visitors' browsers. During a run, new results are published about every five minutes; the page checks for updates every minute. Deployment and caching can add delay.
 
 ## Stable JSON URLs

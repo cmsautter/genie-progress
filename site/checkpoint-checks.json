@@ -1,0 +1,18 @@
+{
+  "build": 158041,
+  "word_index_base": 0,
+  "source": "https://github.com/librematch/genie/blob/70f74de2f0efa92dc171b95ef90eca9b9337b61c/crates/engine/genie-core/src/checkpoint.rs",
+  "checks": [
+    {"word": 0, "label": "Sleeping object count", "description": "Number of objects in the player's sleeping list."},
+    {"word": 1, "label": "Combined resources", "description": "Sum of food, wood, stone and gold, truncating each resource to an integer first. The check does not distinguish the four resources."},
+    {"word": 2, "label": "Object types", "description": "Sum of the master/type IDs of live objects."},
+    {"word": 3, "label": "Object states", "description": "Sum of the state bytes of live objects."},
+    {"word": 4, "label": "Resources held by objects", "description": "Sum of live objects' held amounts, truncating each amount to an integer first."},
+    {"word": 5, "label": "Waypoint placeholder", "description": "Reserved ObjectWaypoints word. This build leaves it at zero; it is not a comparison of waypoint contents."},
+    {"word": 6, "label": "Live object count", "description": "Number of objects in the player's live list."},
+    {"word": 7, "label": "Object positions", "description": "Sum of all three position coordinates of live objects, multiplying each coordinate by 100 and truncating to an integer first."},
+    {"word": 8, "label": "Player ID", "description": "Player identifier for this checkpoint lane."},
+    {"word": 9, "label": "Actions and unit AI", "description": "Sum of live objects' top action types, action state bytes and unit-AI retarget timers."},
+    {"word": 10, "label": "Object IDs", "description": "Sum of the IDs of live objects."}
+  ]
+}
