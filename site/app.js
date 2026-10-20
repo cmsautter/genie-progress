@@ -9,8 +9,8 @@ function runDuration(value){
   return (hours?hours+'h ':'')+(minutes||hours?minutes+'m ':'')+seconds+'s';
 }
 const names = {unsupported:'Unsupported update',initialization_unsupported:'Initialization',checkpoint_mismatch:'Checkpoint mismatch',complete_checked:'End reached · checkpoints match',complete_unchecked:'End reached · no checkpoints',parse_error:'Parse error',multiple_chapters:'Multiple chapters',timeout:'Time limit',process_failure:'Process failure',input_changed:'Input changed',worker_error:'Worker error',invalid_result:'Invalid result',version_mismatch:'Wrong version',empty:'Empty recording',pending:'Not measured yet'};
-const colors = {unsupported:'#f0b17b',initialization_unsupported:'#d29279',checkpoint_mismatch:'#8da2ff',complete_checked:'#5ce0c0',complete_unchecked:'#e1d184',parse_error:'#dc8cab',multiple_chapters:'#a98cba',timeout:'#a8afbf',pending:'#25344b'};
-const color = k => colors[k] || '#8391a9';
+const colored = new Set(['initialization_unsupported','unsupported','checkpoint_mismatch','complete_unchecked','complete_checked','parse_error','multiple_chapters','timeout','pending']);
+const color = k => colored.has(k) ? `var(--outcome-${k})` : 'var(--outcome-other)';
 const outcomeOrder=['initialization_unsupported','unsupported','checkpoint_mismatch','complete_unchecked','complete_checked','parse_error','multiple_chapters','timeout','process_failure','input_changed','worker_error','invalid_result','version_mismatch','empty','pending'];
 function orderedOutcomes(keys){
   const rank=key=>{const i=outcomeOrder.indexOf(key);return i<0?outcomeOrder.length:i;};
@@ -285,7 +285,7 @@ function render(){
   $('outcome-note').textContent=fmt(s.total-s.finished)+(r.status==='build_failed'?' not run':' pending');
   $('outcome-bar').replaceChildren();$('outcome-legend').replaceChildren();
   const counts={...s.counts};if(s.total>s.finished)counts.pending=s.total-s.finished;
-  for(const key of orderedOutcomes(Object.keys(counts))){const count=counts[key],labelText=key==='pending'?waiting:names[key]||key;const bar=el('div');bar.style.width=100*count/Math.max(1,s.total)+'%';bar.style.background=color(key);bar.title=labelText+': '+fmt(count);$('outcome-bar').append(bar);const label=el('span');const swatch=el('i');swatch.style.background=color(key);label.append(swatch,document.createTextNode(labelText),el('b',fmt(count)));$('outcome-legend').append(label);}
+  for(const key of orderedOutcomes(Object.keys(counts))){const count=counts[key],labelText=key==='pending'?waiting:names[key]||key;const bar=el('div');bar.style.width=100*count/Math.max(1,s.total)+'%';bar.style.background=color(key);bar.title=labelText+': '+fmt(count);$('outcome-bar').append(bar);const label=el('span');const swatch=el('i');swatch.style.background=color(key);label.append(swatch,document.createTextNode(labelText),el('b',fmt(count)),el('small',(100*count/Math.max(1,s.total)).toFixed(count&&count<s.total/1000?2:1)+'%'));$('outcome-legend').append(label);}
   renderCharts(s);
   $('blockers').replaceChildren();for(const b of s.blockers.slice(0,7)){const item=el('div'),line=el('div',undefined,'blocker-label'),label=el('span',b.reason);label.title=b.reason;line.append(label,el('strong',fmt(b.count)));const track=el('div',undefined,'blocker-track'),fill=el('div');fill.style.width=100*b.count/Math.max(1,s.blockers[0].count)+'%';track.append(fill);item.append(line,track);$('blockers').append(item);}
   if(!s.blockers.length)$('blockers').append(el('p','No unsupported-condition results reported in this snapshot.','chart-note'));
@@ -482,7 +482,7 @@ function renderCharts(summary){
   chart('percent-chart',summary.histogram);chart('ticks-chart',summary.ticks_histogram);
 }
 function chart(id,buckets){
-  const W=640,H=id==='ticks-chart'?235:280,L=44,R=12,T=16,B=65,plotH=H-T-B,plotW=W-L-R;
+  const W=id==='ticks-chart'?1280:640,H=id==='ticks-chart'?235:280,L=44,R=12,T=16,B=65,plotH=H-T-B,plotW=W-L-R;
   const ns='http://www.w3.org/2000/svg',svg=document.createElementNS(ns,'svg');svg.setAttribute('viewBox',`0 0 ${W} ${H}`);
   const series=chartOutcome==='all'?orderedOutcomes(buckets.flatMap(b=>Object.keys(b.counts))):[chartOutcome];
   const maximum=Math.max(0,...buckets.flatMap(b=>series.map(k=>b.counts[k]||0))),axis=countAxis(maximum,chartScale,plotH),baseline=T+plotH;
@@ -490,7 +490,7 @@ function chart(id,buckets){
   node('desc',{},'Recording counts by progress bucket. Separate bars have a common zero baseline, in a fixed outcome order. '+(chartScale==='log'?'Count axis uses log base 10 of count plus one.':'Count axis is linear.'));
   for(const tick of axis.ticks){
     const y=baseline-axis.scale(tick);
-    node('line',{x1:L,y1:y,x2:W-R,y2:y,stroke:'#243148','stroke-dasharray':tick?'3 4':'none'});
+    node('line',{x1:L,y1:y,x2:W-R,y2:y,style:'stroke:var(--line-soft)','stroke-dasharray':tick?'3 4':'none'});
     node('text',{x:L-7,y:y+3,'text-anchor':'end'},fmt(tick));
   }
   const readout=$(id+'-readout');readout.textContent='Hover or focus a bucket to inspect its counts.';
@@ -504,7 +504,7 @@ function chart(id,buckets){
     for(let j=0;j<series.length;j++){
       const key=series[j],count=bucket.counts[key]||0;if(!count)continue;
       const height=axis.scale(count),x=L+i*step+gutter/2+j*slot+gap/2;
-      node('rect',{x,y:baseline-height,width:Math.max(.2,slot-gap),height,fill:color(key),rx:.6,'class':'histogram-bar','data-outcome':key,'data-count':count},undefined,group);
+      node('rect',{x,y:baseline-height,width:Math.max(.2,slot-gap),height,style:'fill:'+color(key),rx:.6,'class':'histogram-bar','data-outcome':key,'data-count':count},undefined,group);
       if(series.length===1&&step>=26)node('text',{x:x+(slot-gap)/2,y:baseline-height-5,'text-anchor':'middle','font-size':8},fmt(count),group);
     }
     const inspect=()=>{readout.textContent=description;};group.addEventListener('pointerenter',inspect);group.addEventListener('focus',inspect);
@@ -537,7 +537,7 @@ function renderTable(){
     const tr=el('tr'),first=el('td');first.append(recordingLink(r));
     const status=el('td'),badge=el('span',names[outcome(r)]||r.status,'badge');badge.style.setProperty('--badge',color(outcome(r)));status.append(badge);
     const ticks=el('td',r.total_ticks===undefined?'—':fmt(r.completed_ticks||0)+' / '+fmt(r.total_ticks)),percent=el('td');
-    const meter=el('span',progress(r)<0?'—':progress(r).toFixed(2)+'%','micro-progress');meter.style.setProperty('--percent',Math.max(0,progress(r))+'%');percent.append(meter);
+    const meter=el('span',progress(r)<0?'—':progress(r).toFixed(2)+'%','micro-progress');meter.style.setProperty('--percent',Math.max(0,progress(r))+'%');meter.style.setProperty('--badge',color(outcome(r)));percent.append(meter);
     const checkpoint=el('td',r.total_checkpoints===undefined?'—':fmt(r.checkpoints_passed||0)+' / '+fmt(r.total_checkpoints));
     if(r.ignored_commands_to_stop)checkpoint.title=r.ignored_commands_to_stop+' ignored command packets before stop';
     const runtime=el('td',undefined,'recording-elapsed');runtime.append(el('span',replayTime(r.runtime_seconds)));
@@ -563,6 +563,8 @@ $('run-select').onblur=()=>{if(manifest)syncSelector(visibleRuns(manifest.runs),
 $('retry-details').onclick=()=>{detailsCache.delete(selected);loadDetails(manifest.runs.find(r=>r.id===selected)).catch(showLoadError);};
 for(const id of ['search','status-filter','sort'])$(id).addEventListener('input',()=>{page=0;renderTable();});
 $('previous').onclick=()=>{page--;renderTable();};$('next').onclick=()=>{page++;renderTable();};
+function showTheme(){const light=document.documentElement.dataset.theme==='light';$('theme-toggle').textContent=light?'Dark theme':'Light theme';$('theme-toggle').setAttribute('aria-pressed',String(light));}
+$('theme-toggle').onclick=()=>{const next=document.documentElement.dataset.theme==='light'?'dark':'light';document.documentElement.dataset.theme=next;try{localStorage.setItem('genie-theme',next);}catch{}showTheme();};showTheme();
 $('provenance').onclick=()=>$('method').showModal();$('close-method').onclick=()=>$('method').close();
 $('chart-scale').onchange=event=>{chartScale=event.currentTarget.value;if(data)renderCharts(data.run[mode]);};
 $('chart-outcome').onchange=event=>{chartOutcome=event.currentTarget.value;if(data)renderCharts(data.run[mode]);};
