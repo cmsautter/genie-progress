@@ -9,8 +9,8 @@ function runDuration(value){
   return (hours?hours+'h ':'')+(minutes||hours?minutes+'m ':'')+seconds+'s';
 }
 const names = {unsupported:'Unsupported update',initialization_unsupported:'Initialization',checkpoint_mismatch:'Checkpoint mismatch',complete_checked:'End reached · checkpoints match',complete_unchecked:'End reached · no checkpoints',parse_error:'Parse error',multiple_chapters:'Multiple chapters',timeout:'Time limit',process_failure:'Process failure',input_changed:'Input changed',worker_error:'Worker error',invalid_result:'Invalid result',version_mismatch:'Wrong version',empty:'Empty recording',pending:'Not measured yet'};
-const colors = {unsupported:'#f0b17b',initialization_unsupported:'#d29279',checkpoint_mismatch:'#8da2ff',complete_checked:'#5ce0c0',complete_unchecked:'#e1d184',parse_error:'#dc8cab',multiple_chapters:'#a98cba',timeout:'#a8afbf',pending:'#25344b'};
-const color = k => colors[k] || '#8391a9';
+const colored = new Set(['initialization_unsupported','unsupported','checkpoint_mismatch','complete_unchecked','complete_checked','parse_error','multiple_chapters','timeout','pending']);
+const color = k => colored.has(k) ? `var(--outcome-${k})` : 'var(--outcome-other)';
 const outcomeOrder=['initialization_unsupported','unsupported','checkpoint_mismatch','complete_unchecked','complete_checked','parse_error','multiple_chapters','timeout','process_failure','input_changed','worker_error','invalid_result','version_mismatch','empty','pending'];
 function orderedOutcomes(keys){
   const rank=key=>{const i=outcomeOrder.indexOf(key);return i<0?outcomeOrder.length:i;};
@@ -257,10 +257,10 @@ async function loadDetails(run){
 }
 function selectSnapshot(id){
   const run=visibleRuns(manifest.runs).find(r=>r.id===id);if(!run)return;
-  followLatest=false;selected=id;page=0;return loadDetails(run);
+  followLatest=false;selected=id;page=0;$('run-select').value=id;return loadDetails(run);
 }
 function render(){
-  if(!data)return;const r=data.run,s=r[mode];
+  if(!data)return;const r=data.run,s=r[mode];renderTrend();
   $('fixed').classList.toggle('active',mode==='fixed');$('growing').classList.toggle('active',mode==='growing');
   $('fixed').setAttribute('aria-pressed',mode==='fixed');$('growing').setAttribute('aria-pressed',mode==='growing');
   $('scope-note').textContent=mode==='fixed'?'The frozen 5,604-match cohort. Its membership stays constant across full runs.':'All eligible matches frozen at the start of this run. New discoveries enter the next run.';
@@ -285,7 +285,7 @@ function render(){
   $('outcome-note').textContent=fmt(s.total-s.finished)+(r.status==='build_failed'?' not run':' pending');
   $('outcome-bar').replaceChildren();$('outcome-legend').replaceChildren();
   const counts={...s.counts};if(s.total>s.finished)counts.pending=s.total-s.finished;
-  for(const key of orderedOutcomes(Object.keys(counts))){const count=counts[key],labelText=key==='pending'?waiting:names[key]||key;const bar=el('div');bar.style.width=100*count/Math.max(1,s.total)+'%';bar.style.background=color(key);bar.title=labelText+': '+fmt(count);$('outcome-bar').append(bar);const label=el('span');const swatch=el('i');swatch.style.background=color(key);label.append(swatch,document.createTextNode(labelText),el('b',fmt(count)));$('outcome-legend').append(label);}
+  for(const key of orderedOutcomes(Object.keys(counts))){const count=counts[key],labelText=key==='pending'?waiting:names[key]||key;const bar=el('div');bar.style.width=100*count/Math.max(1,s.total)+'%';bar.style.background=color(key);bar.title=labelText+': '+fmt(count);$('outcome-bar').append(bar);const label=el('span');const swatch=el('i');swatch.style.background=color(key);label.append(swatch,document.createTextNode(labelText),el('b',fmt(count)),el('small',(100*count/Math.max(1,s.total)).toFixed(count&&count<s.total/1000?2:1)+'%'));$('outcome-legend').append(label);}
   renderCharts(s);
   $('blockers').replaceChildren();for(const b of s.blockers.slice(0,7)){const item=el('div'),line=el('div',undefined,'blocker-label'),label=el('span',b.reason);label.title=b.reason;line.append(label,el('strong',fmt(b.count)));const track=el('div',undefined,'blocker-track'),fill=el('div');fill.style.width=100*b.count/Math.max(1,s.blockers[0].count)+'%';track.append(fill);item.append(line,track);$('blockers').append(item);}
   if(!s.blockers.length)$('blockers').append(el('p','No unsupported-condition results reported in this snapshot.','chart-note'));
@@ -481,16 +481,88 @@ function renderCharts(summary){
   $('chart-scale-note').textContent=chartScale==='log'?'Separate outcome bars share a baseline. Log mode uses log₁₀(count + 1), including zero. Hover or focus a bucket for exact counts.':'Separate outcome bars start at zero. Heights are proportional to counts. Hover or focus a bucket for exact counts.';
   chart('percent-chart',summary.histogram);chart('ticks-chart',summary.ticks_histogram);
 }
-function chart(id,buckets){
-  const W=640,H=id==='ticks-chart'?235:280,L=44,R=12,T=16,B=65,plotH=H-T-B,plotW=W-L-R;
+function svgCanvas(W,H){
   const ns='http://www.w3.org/2000/svg',svg=document.createElementNS(ns,'svg');svg.setAttribute('viewBox',`0 0 ${W} ${H}`);
+  const node=(tag,attrs,text,parent=svg)=>{const n=document.createElementNS(ns,tag);for(const [k,v]of Object.entries(attrs))n.setAttribute(k,v);if(text!==undefined)n.textContent=text;parent.append(n);return n;};
+  return {svg,node};
+}
+// One completed full fixed-set run per engine commit, oldest first. The fixed cohort is frozen, so these summaries are comparable; growing-corpus membership is not.
+function openSnapshot(id){const pending=selectSnapshot(id);if(pending)pending.catch(showLoadError);}
+function trendRuns(){
+  const best=new Map();
+  for(const r of visibleRuns(manifest.runs)){
+    if(r.status!=='complete'||r.fixed.finished!==r.fixed.total)continue;
+    const key=r.imported?'historical:'+r.id:r.sha,prior=best.get(key);
+    if(!prior||(prior.build_profile!=='release'&&r.build_profile==='release'))best.set(key,r);
+  }
+  return [...best.values()].sort((a,b)=>Date.parse(a.created)-Date.parse(b.created));
+}
+function trendDescription(r){
+  const f=r.fixed,c=r.comparison;
+  return runName(r)+' · '+date(r.created)+' · median '+fmt(f.median_ticks)+' ticks · '+orderedOutcomes(Object.keys(f.counts)).map(k=>(names[k]||k)+': '+fmt(f.counts[k])).join(' · ')+(c?.comparable?' · advanced '+fmt(c.improved)+', regressed '+fmt(c.regressed)+' vs '+c.previous_sha.slice(0,8):'');
+}
+function trendColumns(id,runs,draw){
+  const W=640,H=236,L=48,R=14,T=14,B=30,plotW=W-L-R,plotH=H-T-B,baseline=T+plotH,step=plotW/runs.length;
+  const {svg,node}=svgCanvas(W,H),readout=$('trend-readout');
+  draw({node,L,T,W,step,plotH,baseline});
+  runs.forEach((r,i)=>{
+    const x=L+i*step,description=trendDescription(r);
+    const group=node('g',{'class':'trend-column'+(r.id===selected?' selected':''),tabindex:0,role:'button','aria-label':'Open snapshot: '+description});
+    node('title',{},description,group);
+    node('rect',{x,y:T,width:step,height:plotH,fill:'transparent','class':'trend-hitbox'},undefined,group);
+    draw({node,group,r,i,x,step,L,T,W,plotH,baseline});
+    node('text',{x:x+step/2,y:baseline+15,'text-anchor':'middle'},r.imported?'baseline':r.sha.slice(0,7),group);
+    const inspect=()=>{readout.textContent=description;};group.addEventListener('pointerenter',inspect);group.addEventListener('focus',inspect);
+    group.addEventListener('click',()=>openSnapshot(r.id));group.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();openSnapshot(r.id);}});
+  });
+  $(id).replaceChildren(svg);
+}
+function renderTrend(){
+  const runs=trendRuns();$('trend').hidden=runs.length<2;if(runs.length<2)return;
+  const total=runs[runs.length-1].fixed.total,series=orderedOutcomes(runs.flatMap(r=>Object.keys(r.fixed.counts)));
+  $('trend-note').textContent=fmt(runs.length)+' engine commits · '+fmt(total)+' fixed recordings';
+  $('trend-readout').textContent='Hover or focus a column to inspect it. Select it to open that snapshot.';
+  trendColumns('trend-outcomes',runs,({node,group,r,x,step,L,W,plotH,baseline})=>{
+    if(!group){for(const share of [0,.25,.5,.75,1]){const y=baseline-share*plotH;node('line',{x1:L,y1:y,x2:W-14,y2:y,style:'stroke:var(--line-soft)','stroke-dasharray':share?'3 4':'none'});node('text',{x:L-7,y:y+3,'text-anchor':'end'},share*100+'%');}return;}
+    const width=Math.min(46,step*.62);let top=baseline;
+    for(const key of series){
+      const count=r.fixed.counts[key]||0;if(!count)continue;
+      const height=count/r.fixed.total*plotH;top-=height;
+      node('rect',{x:x+(step-width)/2,y:top,width,height:Math.max(0,height-1),style:'fill:'+color(key)},undefined,group);
+    }
+  });
+  const ticks=runs.map(r=>r.fixed.median_ticks??0),axis=countAxis(Math.max(...ticks),'linear',170);
+  trendColumns('trend-ticks',runs,({node,group,i,x,step,L,W,plotH,baseline})=>{
+    const y=v=>baseline-v/axis.upper*plotH;
+    if(!group){
+      for(const tick of axis.ticks){node('line',{x1:L,y1:y(tick),x2:W-14,y2:y(tick),style:'stroke:var(--line-soft)','stroke-dasharray':tick?'3 4':'none'});node('text',{x:L-7,y:y(tick)+3,'text-anchor':'end'},fmt(tick));}
+      node('polyline',{points:ticks.map((v,j)=>(L+(j+.5)*step)+','+y(v)).join(' '),fill:'none',style:'stroke:var(--link)','stroke-width':2,'stroke-linejoin':'round'});return;
+    }
+    node('circle',{cx:x+step/2,cy:y(ticks[i]),r:4,style:'fill:var(--link);stroke:var(--panel)','stroke-width':2},undefined,group);
+    if(i===0||i===runs.length-1)node('text',{x:x+step/2,y:y(ticks[i])-10,'text-anchor':'middle','class':'trend-value'},fmt(ticks[i]),group);
+  });
+  $('trend-legend').replaceChildren(...series.map(k=>{const label=el('span'),swatch=el('i');swatch.style.background=color(k);label.append(swatch,document.createTextNode(names[k]||k));return label;}));
+  const rows=[];
+  for(const r of [...runs].reverse()){
+    const tr=el('tr'),c=r.comparison,f=r.fixed,open=el('button',runName(r),'text-button trend-open');
+    open.onclick=()=>openSnapshot(r.id);if(r.id===selected){tr.className='selected';open.setAttribute('aria-current','true');}
+    const commit=el('td');commit.append(open);
+    const compared=c?.comparable?el('td'):el('td','—');
+    if(c?.comparable){compared.append(el('span',signed(c.improved)+' / '+(c.regressed?'−'+fmt(c.regressed):'0'),c.regressed?'negative':'positive'),el('small','vs '+c.previous_sha.slice(0,8)));}
+    tr.append(commit,el('td',date(r.created)),compared,el('td',fmt(f.counts.complete_checked||0)),el('td',fmt(f.counts.initialization_unsupported||0)),el('td',fmt(f.median_ticks)));
+    rows.push(tr);
+  }
+  $('trend-rows').replaceChildren(...rows);
+}
+function chart(id,buckets){
+  const W=id==='ticks-chart'?1280:640,H=id==='ticks-chart'?235:280,L=44,R=12,T=16,B=65,plotH=H-T-B,plotW=W-L-R;
+  const {svg,node}=svgCanvas(W,H);
   const series=chartOutcome==='all'?orderedOutcomes(buckets.flatMap(b=>Object.keys(b.counts))):[chartOutcome];
   const maximum=Math.max(0,...buckets.flatMap(b=>series.map(k=>b.counts[k]||0))),axis=countAxis(maximum,chartScale,plotH),baseline=T+plotH;
-  function node(tag,attrs,text,parent=svg){const n=document.createElementNS(ns,tag);for(const [k,v]of Object.entries(attrs))n.setAttribute(k,v);if(text!==undefined)n.textContent=text;parent.append(n);return n;}
   node('desc',{},'Recording counts by progress bucket. Separate bars have a common zero baseline, in a fixed outcome order. '+(chartScale==='log'?'Count axis uses log base 10 of count plus one.':'Count axis is linear.'));
   for(const tick of axis.ticks){
     const y=baseline-axis.scale(tick);
-    node('line',{x1:L,y1:y,x2:W-R,y2:y,stroke:'#243148','stroke-dasharray':tick?'3 4':'none'});
+    node('line',{x1:L,y1:y,x2:W-R,y2:y,style:'stroke:var(--line-soft)','stroke-dasharray':tick?'3 4':'none'});
     node('text',{x:L-7,y:y+3,'text-anchor':'end'},fmt(tick));
   }
   const readout=$(id+'-readout');readout.textContent='Hover or focus a bucket to inspect its counts.';
@@ -504,7 +576,7 @@ function chart(id,buckets){
     for(let j=0;j<series.length;j++){
       const key=series[j],count=bucket.counts[key]||0;if(!count)continue;
       const height=axis.scale(count),x=L+i*step+gutter/2+j*slot+gap/2;
-      node('rect',{x,y:baseline-height,width:Math.max(.2,slot-gap),height,fill:color(key),rx:.6,'class':'histogram-bar','data-outcome':key,'data-count':count},undefined,group);
+      node('rect',{x,y:baseline-height,width:Math.max(.2,slot-gap),height,style:'fill:'+color(key),rx:.6,'class':'histogram-bar','data-outcome':key,'data-count':count},undefined,group);
       if(series.length===1&&step>=26)node('text',{x:x+(slot-gap)/2,y:baseline-height-5,'text-anchor':'middle','font-size':8},fmt(count),group);
     }
     const inspect=()=>{readout.textContent=description;};group.addEventListener('pointerenter',inspect);group.addEventListener('focus',inspect);
@@ -537,7 +609,7 @@ function renderTable(){
     const tr=el('tr'),first=el('td');first.append(recordingLink(r));
     const status=el('td'),badge=el('span',names[outcome(r)]||r.status,'badge');badge.style.setProperty('--badge',color(outcome(r)));status.append(badge);
     const ticks=el('td',r.total_ticks===undefined?'—':fmt(r.completed_ticks||0)+' / '+fmt(r.total_ticks)),percent=el('td');
-    const meter=el('span',progress(r)<0?'—':progress(r).toFixed(2)+'%','micro-progress');meter.style.setProperty('--percent',Math.max(0,progress(r))+'%');percent.append(meter);
+    const meter=el('span',progress(r)<0?'—':progress(r).toFixed(2)+'%','micro-progress');meter.style.setProperty('--percent',Math.max(0,progress(r))+'%');meter.style.setProperty('--badge',color(outcome(r)));percent.append(meter);
     const checkpoint=el('td',r.total_checkpoints===undefined?'—':fmt(r.checkpoints_passed||0)+' / '+fmt(r.total_checkpoints));
     if(r.ignored_commands_to_stop)checkpoint.title=r.ignored_commands_to_stop+' ignored command packets before stop';
     const runtime=el('td',undefined,'recording-elapsed');runtime.append(el('span',replayTime(r.runtime_seconds)));
@@ -563,6 +635,8 @@ $('run-select').onblur=()=>{if(manifest)syncSelector(visibleRuns(manifest.runs),
 $('retry-details').onclick=()=>{detailsCache.delete(selected);loadDetails(manifest.runs.find(r=>r.id===selected)).catch(showLoadError);};
 for(const id of ['search','status-filter','sort'])$(id).addEventListener('input',()=>{page=0;renderTable();});
 $('previous').onclick=()=>{page--;renderTable();};$('next').onclick=()=>{page++;renderTable();};
+function showTheme(){const light=document.documentElement.dataset.theme==='light';$('theme-toggle').textContent=light?'Dark theme':'Light theme';$('theme-toggle').setAttribute('aria-pressed',String(light));}
+$('theme-toggle').onclick=()=>{const next=document.documentElement.dataset.theme==='light'?'dark':'light';document.documentElement.dataset.theme=next;try{localStorage.setItem('genie-theme',next);}catch{}showTheme();};showTheme();
 $('provenance').onclick=()=>$('method').showModal();$('close-method').onclick=()=>$('method').close();
 $('chart-scale').onchange=event=>{chartScale=event.currentTarget.value;if(data)renderCharts(data.run[mode]);};
 $('chart-outcome').onchange=event=>{chartOutcome=event.currentTarget.value;if(data)renderCharts(data.run[mode]);};
