@@ -39,6 +39,8 @@ The usage ranking includes the entire recording, with filters for unsupported, p
 
 Use **Download census JSON** for the exact run's counts, classification reasons, source links and parser provenance. The census runs separately and reuses cached recording counts as engine classifications change.
 
+New corpus snapshots include a census assembled from the existing cache at publication time. Recordings still being scanned are labelled pending; subsequent publications fill them in. This keeps coverage visible when an unchanged engine revision gets a larger corpus run.
+
 The original historical baseline used local diagnostic instrumentation and is labeled separately. New results are produced by a background benchmark worker and published as static JSON reports. The website does not run game code in visitors' browsers. During a run, new results are published about every five minutes; the page checks for updates every minute. Deployment and caching can add delay.
 
 ## Stable JSON URLs
