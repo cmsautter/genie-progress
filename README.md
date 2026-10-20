@@ -17,6 +17,10 @@ Recordings start from their saved headers. The simulation stops at its first rep
 
 Completed recordings with matching usable checkpoints are separate from recordings without checkpoints. These checkpoints contain partial state checksums; matching them does not establish complete equality of every simulation field or tick. Ignored commands, parse errors, multiple chapters, timeouts and process failures remain visible.
 
+### Histogram controls
+
+Progress histograms show separate outcome bars in a fixed order, with a shared baseline. Use **Count scale** to switch between logarithmic and linear counts, and **Chart outcome** to inspect one outcome on its own. Log mode uses `log10(count + 1)` to include zero. Hover or keyboard-focus a bucket for its exact outcome counts and total. The selected scale and outcome apply to both progress and tick histograms.
+
 ### Checkpoint mismatch categories
 
 The dashboard distinguishes object positions, combined resources, live object counts, actions/unit AI and the other recorded checks. The category overview counts affected recordings; selecting a category filters the table. Expand a mismatch to see the affected players, zero-based checkpoint words, and recorded versus simulated values. A recording can fail several checks. These aggregate checks help locate the differing state without establishing its exact cause.

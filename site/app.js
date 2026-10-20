@@ -4,10 +4,16 @@ const fmt = n => typeof n === 'number' ? n.toLocaleString('en-US',{maximumFracti
 const names = {unsupported:'Unsupported update',initialization_unsupported:'Initialization',checkpoint_mismatch:'Checkpoint mismatch',complete_checked:'End reached · checkpoints match',complete_unchecked:'End reached · no checkpoints',parse_error:'Parse error',multiple_chapters:'Multiple chapters',timeout:'Time limit',process_failure:'Process failure',input_changed:'Input changed',worker_error:'Worker error',invalid_result:'Invalid result',version_mismatch:'Wrong version',empty:'Empty recording',pending:'Not measured yet'};
 const colors = {unsupported:'#f0b17b',initialization_unsupported:'#d29279',checkpoint_mismatch:'#8da2ff',complete_checked:'#5ce0c0',complete_unchecked:'#e1d184',parse_error:'#dc8cab',multiple_chapters:'#a98cba',timeout:'#a8afbf',pending:'#25344b'};
 const color = k => colors[k] || '#8391a9';
+const outcomeOrder=['initialization_unsupported','unsupported','checkpoint_mismatch','complete_unchecked','complete_checked','parse_error','multiple_chapters','timeout','process_failure','input_changed','worker_error','invalid_result','version_mismatch','empty','pending'];
+function orderedOutcomes(keys){
+  const rank=key=>{const i=outcomeOrder.indexOf(key);return i<0?outcomeOrder.length:i;};
+  return [...new Set(keys)].sort((a,b)=>rank(a)-rank(b)||a.localeCompare(b));
+}
 const outcome = r => r.status === 'complete' ? (r.checkpoints_passed ? 'complete_checked':'complete_unchecked') : r.status;
 let manifest, data, mode = 'fixed', page = 0, selected = '', request = 0, followLatest = true;
 let manifestRequest=0, detailsReady=false, detailsLoading=false, detailsError='', pendingKey='', detailsController;
 let selectorKey='';
+let chartScale='log',chartOutcome='all',chartSelectorKey='';
 const detailsCache=new Map();
 let checkpointDefinitions;
 const openMismatches=new Set();
@@ -204,8 +210,8 @@ function render(){
   $('outcome-note').textContent=fmt(s.total-s.finished)+(r.status==='build_failed'?' not run':' pending');
   $('outcome-bar').replaceChildren();$('outcome-legend').replaceChildren();
   const counts={...s.counts};if(s.total>s.finished)counts.pending=s.total-s.finished;
-  for(const [key,count] of Object.entries(counts)){const labelText=key==='pending'?waiting:names[key]||key;const bar=el('div');bar.style.width=100*count/Math.max(1,s.total)+'%';bar.style.background=color(key);bar.title=labelText+': '+fmt(count);$('outcome-bar').append(bar);const label=el('span');const swatch=el('i');swatch.style.background=color(key);label.append(swatch,document.createTextNode(labelText),el('b',fmt(count)));$('outcome-legend').append(label);}
-  chart('percent-chart',s.histogram);chart('ticks-chart',s.ticks_histogram);
+  for(const key of orderedOutcomes(Object.keys(counts))){const count=counts[key],labelText=key==='pending'?waiting:names[key]||key;const bar=el('div');bar.style.width=100*count/Math.max(1,s.total)+'%';bar.style.background=color(key);bar.title=labelText+': '+fmt(count);$('outcome-bar').append(bar);const label=el('span');const swatch=el('i');swatch.style.background=color(key);label.append(swatch,document.createTextNode(labelText),el('b',fmt(count)));$('outcome-legend').append(label);}
+  renderCharts(s);
   $('blockers').replaceChildren();for(const b of s.blockers.slice(0,7)){const item=el('div'),line=el('div',undefined,'blocker-label'),label=el('span',b.reason);label.title=b.reason;line.append(label,el('strong',fmt(b.count)));const track=el('div',undefined,'blocker-track'),fill=el('div');fill.style.width=100*b.count/Math.max(1,s.blockers[0].count)+'%';track.append(fill);item.append(line,track);$('blockers').append(item);}
   if(!s.blockers.length)$('blockers').append(el('p','No unsupported-condition results reported in this snapshot.','chart-note'));
   const error=detailsError||r.failure?.message||r.error;$('error').hidden=!error;$('error').textContent=error||'';
@@ -223,14 +229,64 @@ function render(){
   const filter=$('status-filter'),keep=filter.value;filter.replaceChildren(new Option('All outcomes','all'));for(const key of Object.keys(s.counts))filter.add(new Option(names[key]||key,key));filter.value=Object.hasOwn(s.counts,keep)?keep:'all';
   renderCheckpointGroups();renderTable();
 }
+function countAxis(maximum,scaleType,height){
+  const max=Math.max(1,maximum);
+  if(scaleType==='log'){
+    const upper=10**Math.ceil(Math.log10(max)),ticks=[0];
+    for(let n=1;n<=upper;n*=10)ticks.push(n);
+    return {ticks,upper,scale:n=>Math.log10(n+1)/Math.log10(upper+1)*height};
+  }
+  const raw=max/5,power=10**Math.floor(Math.log10(raw)),fraction=raw/power;
+  const step=Math.max(1,(fraction<=1?1:fraction<=2?2:fraction<=5?5:10)*power),upper=Math.ceil(max/step)*step;
+  const ticks=Array.from({length:Math.round(upper/step)+1},(_,i)=>i*step);
+  return {ticks,upper,scale:n=>n/upper*height};
+}
+function histogramOutcomes(summary){return orderedOutcomes([...summary.histogram,...summary.ticks_histogram].flatMap(b=>Object.keys(b.counts)));}
+function renderCharts(summary){
+  const keys=histogramOutcomes(summary);
+  const select=$('chart-outcome'),key=JSON.stringify(keys);
+  if(key!==chartSelectorKey&&document.activeElement!==select){
+    select.replaceChildren(new Option('All outcomes','all'));
+    for(const k of keys)select.add(new Option(names[k]||k,k));
+    if(chartOutcome!=='all'&&!keys.includes(chartOutcome))chartOutcome='all';
+    chartSelectorKey=key;
+  }
+  select.value=chartOutcome;$('chart-scale').value=chartScale;
+  const label=chartScale==='log'?'Log count axis':'Linear count axis';
+  $('percent-scale-label').textContent=label;$('ticks-scale-label').textContent=label;
+  $('chart-scale-note').textContent=chartScale==='log'?'Separate outcome bars share a baseline. Log mode uses log₁₀(count + 1), including zero. Hover or focus a bucket for exact counts.':'Separate outcome bars start at zero. Heights are proportional to counts. Hover or focus a bucket for exact counts.';
+  chart('percent-chart',summary.histogram);chart('ticks-chart',summary.ticks_histogram);
+}
 function chart(id,buckets){
-  const W=620,H=id==='ticks-chart'?200:265,L=35,R=10,T=14,B=52,plotH=H-T-B,plotW=W-L-R;
+  const W=640,H=id==='ticks-chart'?235:280,L=44,R=12,T=16,B=65,plotH=H-T-B,plotW=W-L-R;
   const ns='http://www.w3.org/2000/svg',svg=document.createElementNS(ns,'svg');svg.setAttribute('viewBox',`0 0 ${W} ${H}`);
-  const totals=buckets.map(b=>Object.values(b.counts).reduce((a,n)=>a+n,0)),max=Math.max(1,...totals),scale=n=>Math.log10(n+1)/Math.log10(max+1)*plotH;
-  function node(tag,attrs,text){const n=document.createElementNS(ns,tag);for(const [k,v]of Object.entries(attrs))n.setAttribute(k,v);if(text!==undefined)n.textContent=text;svg.append(n);return n;}
-  for(let tick=1;tick<=max;tick*=10){const y=T+plotH-scale(tick);node('line',{x1:L,y1:y,x2:W-R,y2:y,stroke:'#243148','stroke-dasharray':'3 4'});node('text',{x:L-7,y:y+3,'text-anchor':'end'},fmt(tick));}
-  const step=plotW/Math.max(1,buckets.length);
-  buckets.forEach((bucket,i)=>{let cumulative=0;const total=totals[i];for(const [key,count]of Object.entries(bucket.counts)){const bottom=scale(cumulative),top=scale(cumulative+count);const rect=node('rect',{x:L+i*step+2,y:T+plotH-top,width:Math.max(1,step-4),height:top-bottom,fill:color(key),rx:1});const title=document.createElementNS(ns,'title');title.textContent=bucket.label+' · '+(names[key]||key)+': '+count;rect.append(title);cumulative+=count;}if(total)node('text',{x:L+(i+.5)*step,y:T+plotH-scale(total)-5,'text-anchor':'middle','font-size':8},fmt(total));if(buckets.length<35||i%Math.ceil(buckets.length/25)===0){const x=L+(i+.5)*step;node('text',{x,y:H-36,transform:`rotate(-52 ${x} ${H-36})`,'text-anchor':'end'},bucket.label);}});
+  const series=chartOutcome==='all'?orderedOutcomes(buckets.flatMap(b=>Object.keys(b.counts))):[chartOutcome];
+  const maximum=Math.max(0,...buckets.flatMap(b=>series.map(k=>b.counts[k]||0))),axis=countAxis(maximum,chartScale,plotH),baseline=T+plotH;
+  function node(tag,attrs,text,parent=svg){const n=document.createElementNS(ns,tag);for(const [k,v]of Object.entries(attrs))n.setAttribute(k,v);if(text!==undefined)n.textContent=text;parent.append(n);return n;}
+  node('desc',{},'Recording counts by progress bucket. Separate bars have a common zero baseline, in a fixed outcome order. '+(chartScale==='log'?'Count axis uses log base 10 of count plus one.':'Count axis is linear.'));
+  for(const tick of axis.ticks){
+    const y=baseline-axis.scale(tick);
+    node('line',{x1:L,y1:y,x2:W-R,y2:y,stroke:'#243148','stroke-dasharray':tick?'3 4':'none'});
+    node('text',{x:L-7,y:y+3,'text-anchor':'end'},fmt(tick));
+  }
+  const readout=$(id+'-readout');readout.textContent='Hover or focus a bucket to inspect its counts.';
+  const step=plotW/Math.max(1,buckets.length),gutter=Math.min(5,step*.2),slot=(step-gutter)/Math.max(1,series.length),gap=Math.min(1,slot*.2);
+  buckets.forEach((bucket,i)=>{
+    const total=series.reduce((sum,k)=>sum+(bucket.counts[k]||0),0);
+    const description=bucket.label+' · '+series.map(k=>(names[k]||k)+': '+fmt(bucket.counts[k]||0)).join(' · ')+(series.length>1?' · Total: '+fmt(total):'');
+    const group=node('g',{'class':'histogram-bucket','data-bucket':bucket.label,tabindex:0,role:'img','aria-label':description});
+    node('title',{},description,group);
+    node('rect',{x:L+i*step,y:T,width:step,height:plotH,fill:'transparent','class':'histogram-hitbox'},undefined,group);
+    for(let j=0;j<series.length;j++){
+      const key=series[j],count=bucket.counts[key]||0;if(!count)continue;
+      const height=axis.scale(count),x=L+i*step+gutter/2+j*slot+gap/2;
+      node('rect',{x,y:baseline-height,width:Math.max(.2,slot-gap),height,fill:color(key),rx:.6,'class':'histogram-bar','data-outcome':key,'data-count':count},undefined,group);
+      if(series.length===1&&step>=26)node('text',{x:x+(slot-gap)/2,y:baseline-height-5,'text-anchor':'middle','font-size':8},fmt(count),group);
+    }
+    const inspect=()=>{readout.textContent=description;};group.addEventListener('pointerenter',inspect);group.addEventListener('focus',inspect);
+    if(buckets.length<35||i%Math.ceil(buckets.length/25)===0){const x=L+(i+.5)*step;node('text',{x,y:baseline+13,transform:`rotate(-52 ${x} ${baseline+13})`,'text-anchor':'end'},bucket.label);}
+  });
+  if(!maximum)node('text',{x:L+plotW/2,y:T+plotH/2,'text-anchor':'middle'},'No recordings for this selection');
   $(id).replaceChildren(svg);
 }
 function renderTable(){
@@ -267,4 +323,7 @@ $('retry-details').onclick=()=>{detailsCache.delete(selected);loadDetails(manife
 for(const id of ['search','status-filter','sort'])$(id).addEventListener('input',()=>{page=0;renderTable();});
 $('previous').onclick=()=>{page--;renderTable();};$('next').onclick=()=>{page++;renderTable();};
 $('provenance').onclick=()=>$('method').showModal();$('close-method').onclick=()=>$('method').close();
+$('chart-scale').onchange=event=>{chartScale=event.currentTarget.value;if(data)renderCharts(data.run[mode]);};
+$('chart-outcome').onchange=event=>{chartOutcome=event.currentTarget.value;if(data)renderCharts(data.run[mode]);};
+$('chart-outcome').onblur=()=>{if(data&&chartSelectorKey!==JSON.stringify(histogramOutcomes(data.run[mode])))renderCharts(data.run[mode]);};
 loadCheckpointDefinitions();refresh();setInterval(refresh,60000);
