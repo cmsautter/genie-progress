@@ -11,6 +11,8 @@ Reproducible progress measurements for [GenieRust](https://github.com/librematch
 
 The initial reference targets full internal build **158041**, public game version **101.103.26969.0**, using matching game data. Every run identifies its upstream engine commit, diagnostic instrumentation, toolchain, architecture, data fingerprints and replay hashes.
 
+Snapshot history retains the newest 30 distinct engine revision and build profile pairs, with the historical baseline pinned separately. Repeated runs as the corpus grows replace that revision's representative instead of pushing older revisions out. A completed snapshot remains available alongside an unfinished or failed retry of the same revision.
+
 ## What is measured
 
 Recordings start from their saved headers. The simulation stops at its first reported unsupported condition, differing recorded checkpoint, resource limit or recording end. The dashboard shows ticks reached, progress distributions, first blockers and changes on identical reference recordings.
