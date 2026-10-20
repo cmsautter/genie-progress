@@ -27,6 +27,12 @@ The comparison uses the most recently completed test of a **different engine com
 
 Use the fixed or growing corpus tabs, search by match ID or stopping reason, filter regressions or EOF transitions, and sort by tick or checkpoint gains/losses. **Download changes JSON** provides the full list for the selected run. Active runs update as more results arrive. A missing earlier retained report is reported explicitly, without substituting an unrelated baseline.
 
+### Execution time
+
+The dashboard shows total run wall time, plus average and median time per replay in the selected corpus. Wall time includes build, pauses and retries. Replay averages use the final stored attempt, with current-run measurements separate from cached or historical timings. Missing timers are excluded.
+
+Each recording has a **Time to stop** value such as **12.2s**, including parsing and simulation until its first failure or EOF. Select **Slowest first (elapsed time)** to find expensive recordings. Shared session startup is excluded; historical and fallback process timers can include startup. Full result JSON retains precise `runtime_seconds`, identifies `runtime_source`, and includes timing summaries.
+
 ### Histogram controls
 
 Progress histograms show separate outcome bars in a fixed order, with a shared baseline. Use **Count scale** to switch between logarithmic and linear counts, and **Chart outcome** to inspect one outcome on its own. Log mode uses `log10(count + 1)` to include zero. Hover or keyboard-focus a bucket for its exact outcome counts and total. The selected scale and outcome apply to both progress and tick histograms.

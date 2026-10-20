@@ -1,6 +1,13 @@
 'use strict';
 const $ = id => document.getElementById(id);
 const fmt = n => typeof n === 'number' ? n.toLocaleString('en-US',{maximumFractionDigits:1}) : '—';
+const elapsedSeconds = value => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+const replayTime = value => elapsedSeconds(value) === null ? '—' : value.toLocaleString('en-US',{minimumFractionDigits:1,maximumFractionDigits:1})+'s';
+function runDuration(value){
+  if(elapsedSeconds(value)===null)return '—';
+  const tenths=Math.round(value*10),hours=Math.floor(tenths/36000),minutes=Math.floor(tenths%36000/600),seconds=(tenths%600/10).toFixed(1);
+  return (hours?hours+'h ':'')+(minutes||hours?minutes+'m ':'')+seconds+'s';
+}
 const names = {unsupported:'Unsupported update',initialization_unsupported:'Initialization',checkpoint_mismatch:'Checkpoint mismatch',complete_checked:'End reached · checkpoints match',complete_unchecked:'End reached · no checkpoints',parse_error:'Parse error',multiple_chapters:'Multiple chapters',timeout:'Time limit',process_failure:'Process failure',input_changed:'Input changed',worker_error:'Worker error',invalid_result:'Invalid result',version_mismatch:'Wrong version',empty:'Empty recording',pending:'Not measured yet'};
 const colors = {unsupported:'#f0b17b',initialization_unsupported:'#d29279',checkpoint_mismatch:'#8da2ff',complete_checked:'#5ce0c0',complete_unchecked:'#e1d184',parse_error:'#dc8cab',multiple_chapters:'#a98cba',timeout:'#a8afbf',pending:'#25344b'};
 const color = k => colors[k] || '#8391a9';
@@ -210,6 +217,7 @@ function render(){
   $('checked-sub').textContent=fmt(s.counts.complete_unchecked||0)+' end reached without usable checkpoints';
   $('median').textContent=s.median_percent===null?'—':s.median_percent.toFixed(s.median_percent<1?3:1)+'%';
   $('median-sub').textContent=fmt(s.median_ticks)+' updates · '+fmt(s.measurable)+' measurable cases';
+  renderTiming(r,s);
   const c=r.comparison;$('advanced').textContent=c.comparable?'+'+fmt(c.improved):'Baseline';
   $('advanced-sub').textContent=c.comparable?fmt(c.regressed)+' earlier stops · '+fmt(c.comparable)+' comparable matches':'Reference for subsequent snapshots';
   const waiting=r.status==='build_failed'?'Not run':'Not measured yet';
@@ -234,6 +242,26 @@ function render(){
   $('download').href='data/'+r.id+'.json';
   const filter=$('status-filter'),keep=filter.value;filter.replaceChildren(new Option('All outcomes','all'));for(const key of Object.keys(s.counts))filter.add(new Option(names[key]||key,key));filter.value=Object.hasOwn(s.counts,keep)?keep:'all';
   renderCheckpointGroups();renderCommandCoverage();renderReplayChanges();renderTable();
+}
+function renderTiming(run,scope){
+  const timing=scope.timing,measured=timing?.measured;
+  const fresh=measured?.sample_count>0,stats=fresh?measured:timing;
+  $('run-duration').textContent=runDuration(run.timing?.wall_seconds);
+  $('run-duration-sub').textContent=run.timing?(run.finished?'Creation to finish, including build and pauses':'Elapsed at the last report, including build and pauses'):'Timing metadata not available';
+  $('replay-mean').textContent=replayTime(stats?.mean_seconds);
+  $('replay-median').textContent=replayTime(stats?.median_seconds);
+  const samples=stats?.sample_count||0,label=fresh?'timed in this run':run.imported?'historical timings':'retained timings';
+  const note=samples?fmt(samples)+' '+label:'No recorded timings';
+  $('replay-mean-sub').textContent=note;$('replay-median-sub').textContent=note;
+  let text='Per-replay time includes parsing and simulation until the first failure or EOF. Average and median use each recording’s final stored attempt in the selected corpus; earlier retry attempts are excluded.';
+  if(timing?.sample_count){
+    const retained=timing.retained.sample_count,historical=timing.historical.sample_count;
+    if(fresh&&retained)text+=' '+fmt(retained)+' retained timings are excluded from these current-run averages.';
+    if(!fresh&&!run.imported)text+=' No fresh timed measurements yet; the figures show retained timings, not work performed in this run.';
+    if(run.imported||historical)text+=' Historical timers use the original runner’s timing boundaries.';
+    if(timing.missing_count)text+=' '+fmt(timing.missing_count)+' measured recordings have no timer and are excluded.';
+  }else text+=' Missing timers are shown as unavailable, never as zero.';
+  $('timing-note').textContent=text;
 }
 async function loadReplayChanges(run){
   const version=run.changes?.version||detailsVersion(run),key=run.id+'|'+version;
@@ -435,7 +463,15 @@ function renderTable(){
   if(!data)return;let rows=data.rows.filter(r=>mode==='growing'||r.fixed);const term=$('search').value.toLowerCase(),filter=$('status-filter').value;
   rows=rows.filter(r=>(filter==='all'||outcome(r)===filter)&&(!term||r.match_id.toLowerCase().includes(term)||JSON.stringify([r.unsupported,r.reason,r.differences,r.status==='checkpoint_mismatch'?checkpointReason(r):'']).toLowerCase().includes(term)));
   const progress=r=>r.total_ticks?100*(r.completed_ticks||0)/r.total_ticks:-1;
-  rows.sort((a,b)=>$('sort').value==='id'?a.match_id.localeCompare(b.match_id):($('sort').value==='progress-asc'?1:-1)*(progress(a)-progress(b))||a.match_id.localeCompare(b.match_id));
+  const sort=$('sort').value;
+  rows.sort((a,b)=>{
+    let order=0;
+    if(sort==='time-desc'||sort==='time-asc'){
+      const left=elapsedSeconds(a.runtime_seconds),right=elapsedSeconds(b.runtime_seconds);
+      order=left===null?(right===null?0:1):right===null?-1:(sort==='time-asc'?1:-1)*(left-right);
+    }else if(sort!=='id')order=(sort==='progress-asc'?1:-1)*(progress(a)-progress(b));
+    return order||a.match_id.localeCompare(b.match_id);
+  });
   const pages=Math.max(1,Math.ceil(rows.length/30));page=Math.max(0,Math.min(page,pages-1));$('rows').replaceChildren();
   for(const r of rows.slice(page*30,(page+1)*30)){
     const tr=el('tr'),first=el('td');first.append(recordingLink(r));
@@ -444,6 +480,10 @@ function renderTable(){
     const meter=el('span',progress(r)<0?'—':progress(r).toFixed(2)+'%','micro-progress');meter.style.setProperty('--percent',Math.max(0,progress(r))+'%');percent.append(meter);
     const checkpoint=el('td',r.total_checkpoints===undefined?'—':fmt(r.checkpoints_passed||0)+' / '+fmt(r.total_checkpoints));
     if(r.ignored_commands_to_stop)checkpoint.title=r.ignored_commands_to_stop+' ignored command packets before stop';
+    const runtime=el('td',undefined,'recording-elapsed');runtime.append(el('span',replayTime(r.runtime_seconds)));
+    runtime.title=elapsedSeconds(r.runtime_seconds)===null?'No recorded timer.':'Wall time including parsing and simulation until the first stop or EOF. Shared session startup is excluded; historical and fallback processes may include startup.';
+    if(elapsedSeconds(r.runtime_seconds)!==null&&(r.runtime_source==='retained'||r.runtime_source==='historical'))
+      runtime.append(el('small',r.runtime_source==='retained'?'Retained':'Historical'));
     const diagnostic=el('td');
     if(r.status==='checkpoint_mismatch')diagnostic.append(checkpointDetails(r));
     else{
@@ -452,7 +492,7 @@ function renderTable(){
       if(r.ignored_commands_to_stop)reason+=' '+fmt(r.ignored_commands_to_stop)+' ignored command packets.';
       diagnostic.textContent=reason;
     }
-    tr.append(first,status,ticks,percent,checkpoint,diagnostic);$('rows').append(tr);
+    tr.append(first,status,ticks,percent,checkpoint,runtime,diagnostic);$('rows').append(tr);
   }
   $('row-count').textContent=fmt(rows.length)+' matching recordings';$('page-number').textContent=(page+1)+' / '+pages;$('previous').disabled=page===0;$('next').disabled=page===pages-1;
 }
