@@ -29,6 +29,7 @@ const detailsCache=new Map();
 let checkpointDefinitions;
 const openMismatches=new Set();
 const manifestStorageKey='genie-replay-lab:latest-verified-manifest:v1';
+const changesStorageKey='genie-replay-lab:latest-verified-changes:v1';
 let fetchNonce=0;
 function refreshNote(text){$('refresh-note').textContent=text;$('refresh-note').hidden=!text;}
 function validManifest(value){
@@ -43,6 +44,20 @@ function storedManifest(){
 }
 function rememberManifest(value){
   try{globalThis.sessionStorage?.setItem(manifestStorageKey,JSON.stringify(value));}catch{/* Storage is optional. */}
+}
+function validReplayChanges(value,run){
+  return value?.schema===1&&value.run?.id===run.id&&value.run.sha===run.sha&&Array.isArray(value.rows)
+    &&(!value.available||(value.fixed?.total_recordings===run.fixed.total&&value.growing?.total_recordings===run.growing.total))
+    &&(!run.changes||value.baseline?.id===(run.changes.baseline_id||undefined));
+}
+function storedChanges(run){
+  try{
+    const entry=JSON.parse(globalThis.sessionStorage?.getItem(changesStorageKey)||'null');
+    return entry?.runId===run.id&&typeof entry.version==='string'&&validReplayChanges(entry.value,run)?entry:null;
+  }catch{return null;}
+}
+function rememberChanges(run,version,value){
+  try{globalThis.sessionStorage?.setItem(changesStorageKey,JSON.stringify({runId:run.id,version,value}));}catch{/* Storage is optional. */}
 }
 function olderManifest(value,previous){
   // Request IDs protect against late network requests, not old bytes returned
@@ -332,17 +347,20 @@ async function loadReplayChanges(run){
   changesError='';
   if(replayChanges?.run.id!==run.id){replayChanges=undefined;changesPage=0;}
   const cached=changesCache.get(run.id);
-  if(cached?.version===version){replayChanges=cached.value;changesLoading=false;changesPendingKey='';renderReplayChanges();return;}
+  const persisted=storedChanges(run);
+  const exact=[cached,persisted].find(entry=>entry?.version===version);
+  if(exact){replayChanges=exact.value;changesLoading=false;changesPendingKey='';renderReplayChanges();return;}
+  // A new manifest version can arrive before its comparison report is available
+  // at the edge. Keep the last verified report for this run visible while retrying.
+  if(!replayChanges)replayChanges=cached?.value||persisted?.value;
   changesLoading=true;changesPendingKey=key;renderReplayChanges();
   try{
     const value=await reportJSON(run.files?.changes,'changes/'+run.id+'.json',version,changesController.signal);
     if(current!==changesRequest||selected!==run.id)return;
-    if(value.schema!==1||value.run?.id!==run.id||value.run.sha!==run.sha||!Array.isArray(value.rows)
-      ||(value.available&&(value.fixed?.total_recordings!==run.fixed.total||value.growing?.total_recordings!==run.growing.total))
-      ||(run.changes&&value.baseline?.id!==(run.changes.baseline_id||undefined)))throw Error('Replay comparison belongs to a different benchmark snapshot.');
+    if(!validReplayChanges(value,run))throw Error('Replay comparison belongs to a different benchmark snapshot.');
     changesCache.delete(run.id);changesCache.set(run.id,{version,value});
     while(changesCache.size>3)changesCache.delete(changesCache.keys().next().value);
-    replayChanges=value;
+    replayChanges=value;rememberChanges(run,version,value);
   }catch(error){if(current===changesRequest&&error.name!=='AbortError')changesError=error.message;}
   finally{if(current===changesRequest){changesLoading=false;changesPendingKey='';renderReplayChanges();}}
 }
@@ -361,7 +379,7 @@ function renderReplayChanges(){
   $('changes-download').hidden=!value?.available;
   const state=$('changes-state');
   if(!value){state.textContent=changesError||'Loading changes against the previous completed engine snapshot…';return;}
-  if(!value.available){state.textContent=value.reason;return;}
+  if(!value.available){state.textContent=value.reason+(changesLoading?' · updating…':'')+(changesError?' · '+changesError:'');return;}
   const link=el('a',value.baseline.sha.slice(0,12));link.href='https://github.com/librematch/genie/commit/'+value.baseline.sha;link.target='_blank';link.rel='noopener';
   state.replaceChildren(document.createTextNode('Compared with '),link,document.createTextNode(' · completed '+date(value.baseline.finished||value.baseline.created)+(changesLoading?' · updating…':'')+(changesError?' · '+changesError:'')));
   for(const [id,count] of [['changes-total',s.changed_recordings],['changes-advanced',s.advanced],['changes-regressed',s.regressed],['changes-other',s.mixed+s.changed+s.measurement]])$(id).textContent=fmt(count);
