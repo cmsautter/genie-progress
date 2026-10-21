@@ -371,7 +371,7 @@ function renderReplayChanges(){
   const term=$('changes-search').value.toLowerCase(),filter=$('changes-filter').value||'all',sort=$('changes-sort').value||'ticks-absolute';
   let rows=value.rows.filter(r=>(mode==='growing'||r.fixed)&&(filter==='all'||r.kind===filter||(filter==='stops'&&r.stop_changed)||(filter==='new-eof'&&r.new_eof)||(filter==='lost-eof'&&r.lost_eof)));
   if(term)rows=rows.filter(r=>JSON.stringify([r.match_id,r.before.match_id,r.before.stop,r.after.stop]).toLowerCase().includes(term));
-  const metric=r=>sort==='ticks-gain'?(r.ticks_delta??-Infinity):sort==='ticks-loss'?-(r.ticks_delta??Infinity):sort==='checkpoints-gain'?(r.checkpoints_delta??-Infinity):sort==='checkpoints-loss'?-(r.checkpoints_delta??Infinity):Math.abs(r.ticks_delta||0);
+  const metric=r=>sort==='ticks-now'?(r.after.completed_ticks??-Infinity):sort==='ticks-gain'?(r.ticks_delta??-Infinity):sort==='ticks-loss'?-(r.ticks_delta??Infinity):sort==='checkpoints-gain'?(r.checkpoints_delta??-Infinity):sort==='checkpoints-loss'?-(r.checkpoints_delta??Infinity):Math.abs(r.ticks_delta||0);
   rows.sort((a,b)=>(sort==='id'?0:metric(b)-metric(a))||a.match_id.localeCompare(b.match_id));
   const pages=Math.max(1,Math.ceil(rows.length/25));changesPage=Math.max(0,Math.min(changesPage,pages-1));
   const labels={advanced:'Advanced',regressed:'Regressed',mixed:'Mixed',changed:'Other change',measurement:'Length metadata changed'};
