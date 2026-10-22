@@ -18,6 +18,10 @@ function orderedOutcomes(keys){
 }
 const outcome = r => r.status === 'complete' ? (r.checkpoints_passed ? 'complete_checked':'complete_unchecked') : r.status;
 let manifest, data, mode = 'fixed', page = 0, selected = '', request = 0, followLatest = true;
+const cohortScopes=['core500','extension500','combined1000'];
+const corpusScopes=[...cohortScopes,'growing','fixed'];
+let modeChosen=false;
+const inScope=(row,scope=mode)=>scope==='growing'||(scope==='fixed'?!!row.fixed:row.cohorts?.includes(scope));
 let manifestRequest=0, detailsReady=false, detailsLoading=false, detailsError='', pendingKey='', detailsController;
 let selectorKey='';
 let chartScale='log',chartOutcome='all',chartSelectorKey='';
@@ -68,7 +72,7 @@ function olderManifest(value,previous){
   const latest=m=>visibleRuns(m.runs)[0];
   if(latest(value)&&latest(previous)&&Date.parse(latest(value).created)<Date.parse(latest(previous).created))return true;
   const current=new Map(value.runs.map(run=>[run.id,run]));
-  const rank={queued:0,building:1,running:2,complete:3,build_failed:3,continued:3};
+  const rank={queued:0,building:1,running:2,complete:3,build_failed:3,continued:3,aborted:3};
   for(const old of previous.runs){
     const run=current.get(old.id);if(!run)continue;
     if(['fixed','growing'].some(scope=>run[scope].finished<old[scope].finished))return true;
@@ -138,7 +142,7 @@ function checkpointDetails(row){
   return details;
 }
 function renderCheckpointGroups(){
-  const groups=new Map(),rows=detailsReady?data.rows.filter(r=>r.status==='checkpoint_mismatch'&&(mode==='growing'||r.fixed)):[];
+  const groups=new Map(),rows=detailsReady?data.rows.filter(r=>r.status==='checkpoint_mismatch'&&inScope(r)):[];
   for(const row of rows){
     const checks=checkpointCategories(row);
     for(const check of checks.length?checks:[{word:null,label:'Check details unavailable'}]){
@@ -175,7 +179,7 @@ function visibleRuns(runs){
 function runName(r){return r.imported?'Historical baseline':r.pilot?'Pilot '+r.sha.slice(0,8):r.sha.slice(0,8);}
 function runStatus(r){
   if(r.status==='build_failed')return {adapter:'Adapter update needed',setup:'Worker setup failed',dependencies:'Dependency fetch failed',compilation:'Build failed',artifact:'Build output missing'}[r.failure?.stage]||'Build failed';
-  return {running:'In progress',queued:'Queued',building:'Preparing and building engine',complete:'Complete',continued:'Archived worker'}[r.status]||r.status;
+  return {running:'In progress',queued:'Queued',building:'Preparing and building engine',complete:'Complete',continued:'Archived worker',aborted:'Aborted'}[r.status]||r.status;
 }
 function runLabel(r){
   const profile=r.imported?'':({release:'Release',forced:'Profiling'}[r.build_profile]||r.build_profile||'');
@@ -226,6 +230,7 @@ async function refresh(){
       value=prior;
     }else{refreshNote('');rememberManifest(value);}
     manifest=value;
+    if(!modeChosen)mode=manifest.cohorts?'core500':'fixed';
     const age=manifest.heartbeat ? Date.now()-new Date(manifest.heartbeat).getTime():Infinity;
     $('health').textContent=age<180000?'Worker reporting':age<7200000?'Report updated '+Math.round(age/60000)+'m ago':'Worker report stale';$('health').className='health '+(age<180000?'alive':age>=7200000?'stale':'');
     $('reference-count').textContent=fmt(manifest.reference_count);$('catalog-count').textContent=fmt(manifest.catalog_count);
@@ -258,9 +263,11 @@ async function loadDetails(run){
     const value=await reportJSON(run.files?.details,'data/'+id+'.json',version,detailsController.signal);
     if(current!==request||selected!==id)return;
     if(value.run?.id!==id||value.run.sha!==run.sha||!Array.isArray(value.rows))throw Error('The server returned details for a different snapshot.');
-    if(['fixed','growing'].some(scope=>value.run[scope]?.finished!==run[scope].finished||value.run[scope]?.total!==run[scope].total)
+    if(['fixed','growing',...cohortScopes.filter(scope=>run[scope])].some(scope=>value.run[scope]?.finished!==run[scope].finished||value.run[scope]?.total!==run[scope].total
+          ||(run[scope].membership_sha256&&value.run[scope]?.membership_sha256!==run[scope].membership_sha256))
        ||value.run.status!==run.status
-       ||(run.files?.details&&(value.rows.length!==run.growing.finished||value.rows.filter(row=>row.fixed).length!==run.fixed.finished)))
+       ||(run.files?.details&&(value.rows.length!==run.growing.finished||value.rows.filter(row=>row.fixed).length!==run.fixed.finished
+          ||cohortScopes.some(scope=>run[scope]&&value.rows.filter(row=>inScope(row,scope)).length!==run[scope].finished))))
       throw Error('Recording details do not match the selected report version. Keeping the previous verified results.');
     detailsCache.delete(id);detailsCache.set(id,{version,value});
     while(detailsCache.size>3)detailsCache.delete(detailsCache.keys().next().value);
@@ -275,12 +282,16 @@ function selectSnapshot(id){
   followLatest=false;selected=id;page=0;return loadDetails(run);
 }
 function render(){
-  if(!data)return;const r=data.run,s=r[mode];
-  $('fixed').classList.toggle('active',mode==='fixed');$('growing').classList.toggle('active',mode==='growing');
-  $('fixed').setAttribute('aria-pressed',mode==='fixed');$('growing').setAttribute('aria-pressed',mode==='growing');
-  $('scope-note').textContent=mode==='fixed'?'The frozen 5,604-match cohort. Its membership stays constant across full runs.':'All eligible matches frozen at the start of this run. New discoveries enter the next run.';
+  if(!data)return;const r=data.run;if(!r[mode])mode='fixed';const s=r[mode];
+  for(const scope of corpusScopes){$(scope).classList.toggle('active',mode===scope);$(scope).setAttribute('aria-pressed',mode===scope);if(cohortScopes.includes(scope)){$(scope).hidden=!r[scope];if(r[scope])$(scope+'-count').textContent=fmt(r[scope].total);}}
+  $('reference-count').textContent=fmt(r.fixed.total);$('catalog-count').textContent=fmt(r.growing.total);
+  const scopeText={core500:'The frozen core of 500 recordings, selected for engine-feature and failure coverage.',extension500:'The frozen 500 additional recordings, disjoint from the core.',combined1000:'The frozen 1,000-recording baseline: core 500 plus 500 additional recordings.'};
+  $('scope-note').textContent=scopeText[mode]|| (mode==='fixed'?'Members of the original 5,604-recording reference scheduled in this snapshot. The legacy membership stays unchanged.':r.workflow?.full_corpus_requested?'All recordings frozen for this daily corpus sweep, including the fixed baseline.':r.workflow?'The 1,000 scheduled baseline recordings. Full-corpus work is requested separately at 04:00 Europe/Berlin.':'All eligible matches frozen at the start of this run. New discoveries enter the next run.');
+  if(cohortScopes.includes(mode))$('scope-note').textContent+=' IDs and recording hashes stay fixed. This failure-focused set does not estimate whole-corpus success rates.';
+  if(s.not_scheduled)$('scope-note').textContent+=' '+fmt(s.not_scheduled)+' members were not scheduled in this historical snapshot.';
   if(r.pilot)$('scope-note').textContent+=' This is a limited pilot; it does not cover the full cohort.';
-  $('run-state').textContent='● '+(r.status==='running'?'Measuring recordings':r.status==='complete'?'Run complete':runStatus(r));
+  $('run-state').textContent='● '+(r.status==='running'?(r.workflow?.full_corpus_requested&&r.combined1000?.finished===r.combined1000?.total?'Measuring daily corpus':'Measuring recordings'):r.status==='complete'?'Run complete':runStatus(r));
+  renderSchedule(r);
   $('run-state').setAttribute('data-state',r.status);
   const commit=el('a',r.sha.slice(0,12));commit.href='https://github.com/librematch/genie/commit/'+r.sha;commit.target='_blank';commit.rel='noopener';$('commit').replaceChildren(commit);
   $('run-time').textContent=(r.imported?'Imported historical scan · ':'')+r.architecture+' · '+date(r.finished||r.created);
@@ -294,17 +305,16 @@ function render(){
   $('median').textContent=s.median_percent===null?'—':s.median_percent.toFixed(s.median_percent<1?3:1)+'%';
   $('median-sub').textContent=fmt(s.median_ticks)+' updates · '+fmt(s.measurable)+' measurable cases';
   renderTiming(r,s);
-  const c=r.comparison;$('advanced').textContent=c.comparable?'+'+fmt(c.improved):'Baseline';
-  $('advanced-sub').textContent=c.comparable?fmt(c.regressed)+' earlier stops · '+fmt(c.comparable)+' comparable matches':'Reference for subsequent snapshots';
-  const waiting=r.status==='build_failed'?'Not run':'Not measured yet';
-  $('outcome-note').textContent=fmt(s.total-s.finished)+(r.status==='build_failed'?' not run':' pending');
+  renderChangeMetric(r);
+  const waiting=r.status==='build_failed'?'Not run':r.status==='aborted'?'Not measured · run aborted':'Not measured yet';
+  $('outcome-note').textContent=fmt(s.total-s.finished)+(r.status==='build_failed'?' not run':r.status==='aborted'?' unmeasured':' pending');
   $('outcome-bar').replaceChildren();$('outcome-legend').replaceChildren();
   const counts={...s.counts};if(s.total>s.finished)counts.pending=s.total-s.finished;
   for(const key of orderedOutcomes(Object.keys(counts))){const count=counts[key],labelText=key==='pending'?waiting:names[key]||key;const bar=el('div');bar.style.width=100*count/Math.max(1,s.total)+'%';bar.style.background=color(key);bar.title=labelText+': '+fmt(count);$('outcome-bar').append(bar);const label=el('span');const swatch=el('i');swatch.style.background=color(key);label.append(swatch,document.createTextNode(labelText),el('b',fmt(count)));$('outcome-legend').append(label);}
   renderCharts(s);
   $('blockers').replaceChildren();for(const b of s.blockers.slice(0,7)){const item=el('div'),line=el('div',undefined,'blocker-label'),label=el('span',b.reason);label.title=b.reason;line.append(label,el('strong',fmt(b.count)));const track=el('div',undefined,'blocker-track'),fill=el('div');fill.style.width=100*b.count/Math.max(1,s.blockers[0].count)+'%';track.append(fill);item.append(line,track);$('blockers').append(item);}
   if(!s.blockers.length)$('blockers').append(el('p','No unsupported-condition results reported in this snapshot.','chart-note'));
-  const error=detailsError||r.failure?.message||r.error;$('error').hidden=!error;$('error').textContent=error||'';
+    const error=detailsError||r.failure?.message||r.error;$('error').hidden=!error;$('error').textContent=error||'';
   $('failure-diagnostics').hidden=!r.failure;
   $('failure-diagnostic-text').textContent=r.failure?'Stage: '+r.failure.stage+'\nCode: '+r.failure.code+'\n\n'+(r.failure.details||r.failure.message):'';
   const untested=r.status==='build_failed'&&s.finished===0;
@@ -318,6 +328,22 @@ function render(){
   $('download').href=reportURL(r.files?.details,'data/'+r.id+'.json',detailsVersion(r));
   const filter=$('status-filter'),keep=filter.value;filter.replaceChildren(new Option('All outcomes','all'));for(const key of Object.keys(s.counts))filter.add(new Option(names[key]||key,key));filter.value=Object.hasOwn(s.counts,keep)?keep:'all';
   renderCheckpointGroups();renderCommandCoverage();renderReplayChanges();renderTable();
+}
+function renderChangeMetric(run){
+  const stats=replayChanges?.run.id===run.id?replayChanges[mode]:null;
+  const c=cohortScopes.includes(mode)?{comparable:stats?.compared_recordings||0,improved:stats?.advanced||0,regressed:stats?.regressed||0}:run.comparison;
+  $('advanced').textContent=c?.comparable?'+'+fmt(c.improved):'Baseline';
+  $('advanced-sub').textContent=c?.comparable?fmt(c.regressed)+' regressions · '+fmt(c.comparable)+' comparable matches':'Reference for subsequent snapshots';
+}
+function renderSchedule(run){
+  const note=$('scheduling-note'),schedule=manifest?.workflow;
+  note.hidden=!schedule&&!run.scheduling;
+  const stages=(run.scheduling?.stages||[]).filter(s=>s.total);
+  const phaseNames={core500:'Core',extension500:'Additional',daily_corpus:'Daily tail'};
+  let text=stages.map(s=>(phaseNames[s.id]||s.label)+': '+fmt(s.finished)+' / '+fmt(s.total)).join(' · ');
+  if(schedule)text+=(text?'. ':'')+'Full corpus daily at '+schedule.daily_time+' '+schedule.timezone+'; appended at the end when busy.';
+  if(run.workflow?.daily_sweeps?.length)text+=' Daily request: '+run.workflow.daily_sweeps.map(s=>s.local_date).join(', ')+'.';
+  note.textContent=text;
 }
 function renderTiming(run,scope){
   const timing=scope.timing,measured=timing?.measured;
@@ -374,6 +400,7 @@ function changeStop(stop){
   cell.append(detail);return cell;
 }
 function renderReplayChanges(){
+  if(data)renderChangeMetric(data.run);
   const value=replayChanges?.run.id===selected?replayChanges:undefined,s=value?.[mode];
   $('changes-content').hidden=!value?.available;
   $('changes-download').hidden=!value?.available;
@@ -387,7 +414,7 @@ function renderReplayChanges(){
   $('changes-warnings').textContent=value.warnings.join(' ');$('changes-warnings').hidden=!value.warnings.length;
   $('changes-download').href='changes/'+encodeURIComponent(value.run.id)+'.json';
   const term=$('changes-search').value.toLowerCase(),filter=$('changes-filter').value||'all',sort=$('changes-sort').value||'ticks-absolute';
-  let rows=value.rows.filter(r=>(mode==='growing'||r.fixed)&&(filter==='all'||r.kind===filter||(filter==='stops'&&r.stop_changed)||(filter==='new-eof'&&r.new_eof)||(filter==='lost-eof'&&r.lost_eof)));
+  let rows=value.rows.filter(r=>inScope(r)&&(filter==='all'||r.kind===filter||(filter==='stops'&&r.stop_changed)||(filter==='new-eof'&&r.new_eof)||(filter==='lost-eof'&&r.lost_eof)));
   if(term)rows=rows.filter(r=>JSON.stringify([r.match_id,r.before.match_id,r.before.stop,r.after.stop]).toLowerCase().includes(term));
   const metric=r=>sort==='ticks-now'?(r.after.completed_ticks??-Infinity):sort==='ticks-gain'?(r.ticks_delta??-Infinity):sort==='ticks-loss'?-(r.ticks_delta??Infinity):sort==='checkpoints-gain'?(r.checkpoints_delta??-Infinity):sort==='checkpoints-loss'?-(r.checkpoints_delta??Infinity):Math.abs(r.ticks_delta||0);
   rows.sort((a,b)=>(sort==='id'?0:metric(b)-metric(a))||a.match_id.localeCompare(b.match_id));
@@ -438,6 +465,7 @@ function renderCommandCoverage(){
   const state=$('command-coverage-state');
   if(!ready){state.textContent=commandCoverageError||(commandCoverageState==='missing'?'Command census queued or not available for this snapshot.':'Loading the full-recording command census…');return;}
   state.textContent=fmt(s.scanned_recordings)+' / '+fmt(s.total_recordings)+' recordings scanned'+(s.pending_recordings?' · '+fmt(s.pending_recordings)+' pending':'')+(s.unreadable_recordings?' · '+fmt(s.unreadable_recordings)+' unreadable bodies excluded':'');
+  if(s.not_scheduled_recordings)state.textContent+=' · '+fmt(s.not_scheduled_recordings)+' members not scheduled';
   if(commandCoverageState!=='ready')state.textContent+=' · keeping the last verified census'+(commandCoverageError?': '+commandCoverageError:' while the update is unavailable');
   const reviewed=commandStandard==='reviewed',types=s.type_counts.implemented+(reviewed?0:s.type_counts.partial),occurrences=s.occurrence_counts.implemented+(reviewed?0:s.occurrence_counts.partial);
   const percent=n=>n===null||n===undefined?'—':n.toFixed(n<1?2:1)+'%';
@@ -533,7 +561,7 @@ function chart(id,buckets){
 }
 function renderTable(){
   if(!detailsReady){$('rows').replaceChildren();$('row-count').textContent=detailsError?'Recording details unavailable':'Loading recording details…';$('page-number').textContent='—';$('previous').disabled=true;$('next').disabled=true;return;}
-  if(!data)return;let rows=data.rows.filter(r=>mode==='growing'||r.fixed);const term=$('search').value.toLowerCase(),filter=$('status-filter').value;
+  if(!data)return;let rows=data.rows.filter(r=>inScope(r));const term=$('search').value.toLowerCase(),filter=$('status-filter').value;
   rows=rows.filter(r=>(filter==='all'||outcome(r)===filter)&&(!term||r.match_id.toLowerCase().includes(term)||JSON.stringify([r.unsupported,r.reason,r.differences,r.status==='checkpoint_mismatch'?checkpointReason(r):'']).toLowerCase().includes(term)));
   const progress=r=>r.total_ticks?100*(r.completed_ticks||0)/r.total_ticks:-1;
   const ticks=r=>Number.isFinite(r.completed_ticks)&&r.completed_ticks>=0?r.completed_ticks:-1;
@@ -574,7 +602,7 @@ function renderTable(){
   }
   $('row-count').textContent=fmt(rows.length)+' matching recordings';$('page-number').textContent=(page+1)+' / '+pages;$('previous').disabled=page===0;$('next').disabled=page===pages-1;
 }
-for(const key of ['fixed','growing'])$(key).onclick=()=>{mode=key;page=0;changesPage=0;render();};
+for(const key of corpusScopes)$(key).onclick=()=>{mode=key;modeChosen=true;page=0;changesPage=0;render();};
 const showLoadError=error=>{$('error').hidden=false;$('error').textContent=error.message;};
 $('run-select').onchange=event=>{const pending=selectSnapshot(event.currentTarget.value);if(pending)pending.catch(showLoadError);};
 $('run-select').onblur=()=>{if(manifest)syncSelector(visibleRuns(manifest.runs),true);};
