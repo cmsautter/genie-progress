@@ -242,6 +242,8 @@ jobs:
               simulated_path = pathlib.Path('dist') / (name.removesuffix('.json') + '-simulated.json')
               simulated_path.write_text(json.dumps(simulated, ensure_ascii=False, indent=2) + '\n')
               shutil.copyfile(simulated_path, simulated_path.with_suffix(''))
+          import runpy
+          runpy.run_path('site/engine_reports.py')['build']('dist')
           site_bytes = sum(path.stat().st_size for path in pathlib.Path('dist').rglob('*') if path.is_file())
           if site_bytes >= MAX_SITE_BYTES:
               raise ValueError(f'Generated website exceeds the 900 MiB site budget ({site_bytes} bytes)')
