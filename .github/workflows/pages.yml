@@ -108,6 +108,8 @@ jobs:
               (run for run in manifest['runs'] if not run.get('pilot') and run['status'] != 'continued'),
               key=lambda run: datetime.datetime.fromisoformat(run['created']), reverse=True,
           )
+          import runpy
+          engine_diagnostics = runpy.run_path('site/engine_diagnostics.py')
           def stopping_reasons(rows, total):
               outcomes = Counter(row['status'] for row in rows)
               groups = defaultdict(set)
@@ -131,22 +133,21 @@ jobs:
                   if status == 'complete':
                       continue
                   reasons = set()
-                  for condition in row.get('unsupported', []):
-                      for item in [condition, *condition.get('freezes', [])]:
-                          if item.get('reason'):
-                              reasons.add(str(item['reason']))
+                  for item in engine_diagnostics['conditions'](row):
+                      if item.get('reason'):
+                          reasons.add((item.get('engine_error', {}).get('kind'), str(item['reason'])))
                   if status == 'checkpoint_mismatch':
                       for difference in row.get('differences', []):
                           word = difference.get('word')
                           check = checkpoint_checks.get(word) if row.get('build') == checkpoint_definitions['build'] else None
                           label = check['label'] if check else f'Checkpoint word {word}'
                           reason = 'Checkpoint mismatch: ' + label
-                          reasons.add(reason)
+                          reasons.add((None, reason))
                           checkpoint_words[(status, reason)] = word
                   if not reasons:
-                      reasons.add(str(row.get('reason') or row.get('error') or labels.get(status, status)))
-                  for reason in reasons:
-                      groups[(status, reason)].add(row['match_id'])
+                      reasons.add((None, str(row.get('reason') or row.get('error') or labels.get(status, status))))
+                  for kind, reason in reasons:
+                      groups[(status, kind, reason)].add(row['match_id'])
               stopped = len(rows) - outcomes['complete']
               return {
                   'total_recordings': total,
@@ -154,13 +155,15 @@ jobs:
                   'pending_recordings': max(0, total - len(rows)),
                   'stopped_recordings': stopped,
                   'outcomes': dict(sorted(outcomes.items())),
+                  'engine_errors': engine_diagnostics['summary'](rows),
                   'reasons': [
                       {'status': status, 'reason': reason, 'count': len(ids),
+                       **({'engine_kind': kind} if kind else {}),
                        'percent_of_stopped': round(100 * len(ids) / stopped, 2),
                        'examples': sorted(ids)[:5],
                        **({'checkpoint_word': checkpoint_words[(status, reason)]}
                           if (status, reason) in checkpoint_words else {})}
-                      for (status, reason), ids in sorted(groups.items(), key=lambda item: (-len(item[1]), *item[0]))
+                      for (status, kind, reason), ids in sorted(groups.items(), key=lambda item: (-len(item[1]), item[0][0], item[0][1] or '', item[0][2]))
                   ],
               }
           for name, candidates in (

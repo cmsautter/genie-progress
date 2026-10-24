@@ -8,6 +8,9 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import runpy
+
+diagnostics = runpy.run_path(str(Path(__file__).with_name('engine_diagnostics.py')))
 
 
 SHA = re.compile(r'[0-9a-f]{40}')
@@ -60,20 +63,19 @@ def progress_report(report):
     for row in report['rows']:
         reasons = set()
         if row['status'] != 'complete':
-            for condition in row.get('unsupported', []):
-                for item in (condition, *condition.get('freezes', [])):
-                    if item.get('reason'):
-                        reasons.add(str(item['reason']))
+            reasons = {(item.get('engine_error', {}).get('kind'), str(item['reason']))
+                       for item in diagnostics['conditions'](row) if item.get('reason')}
             if row['status'] == 'checkpoint_mismatch':
-                reasons.update('Checkpoint mismatch: word ' + str(d['word'])
+                reasons.update((None, 'Checkpoint mismatch: word ' + str(d['word']))
                                for d in row.get('differences', []))
             if not reasons:
-                reasons.add(str(row.get('reason') or row.get('error') or row['status']))
+                reasons.add((None, str(row.get('reason') or row.get('error') or row['status'])))
         identifiers = []
-        for reason in sorted(reasons):
-            key = (row['status'], reason)
+        for kind, reason in sorted(reasons, key=lambda item: (item[0] or '', item[1])):
+            key = (row['status'], kind, reason)
             if key not in groups:
                 groups[key] = {'id': len(groups), 'status': key[0], 'reason': reason,
+                               **({'engine_kind': kind} if kind else {}),
                                'count': 0, 'examples': []}
             entry = groups[key]
             entry['count'] += 1
@@ -94,7 +96,9 @@ def progress_report(report):
             'abort_reason_ids': 'Row IDs refer to abort_reasons[].id; counts are distinct recordings per condition and can overlap.',
             'completed_ticks': 'Engine steps reached before the first stopping condition; checkpoint counts are separate correctness evidence.',
         },
-        'rows': [{**{key: row[key] for key in fields if key in row}, 'abort_reason_ids': reasons}
+        'rows': [{**{key: row[key] for key in fields if key in row}, 'abort_reason_ids': reasons,
+                  **({'engine_error_kinds': sorted({e['kind'] for e in diagnostics['structured'](row)})}
+                     if diagnostics['structured'](row) else {})}
                  for row, reasons in zip(report['rows'], row_reasons)],
     }
 
@@ -109,6 +113,7 @@ def build(directory):
         [(sha, run['id'], distance, run.get('files', {}).get('details'))
          for sha, (run, distance) in sorted(choices.items())],
         hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        hashlib.sha256(Path(__file__).with_name('engine_diagnostics.py').read_bytes()).hexdigest(),
     ], sort_keys=True).encode()).hexdigest()
     index_path = destination / 'index.json'
     if index_path.exists():

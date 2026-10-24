@@ -321,7 +321,7 @@ function render(){
   $('table-state').hidden=!detailsLoading&&!detailsError&&!untested;
   $('table-state').textContent=detailsError?'Recording details unavailable.':untested?'No replay tests were started. This snapshot has no simulation results.':detailsReady?'Updating recording details…':'Loading recording details for '+runName(r)+'…';
   $('retry-details').hidden=!detailsError;
-  for(const id of ['search','status-filter','sort'])$(id).disabled=!detailsReady;
+  for(const id of ['search','status-filter','engine-kind-filter','sort'])$(id).disabled=!detailsReady;
   $('identity').textContent=JSON.stringify({run_id:r.id,...(data.identity||{}),details_loaded:detailsReady,comparison_note:'Progress changes compare the same recording hashes in the fixed cohort; historical and current instrumentation are identified separately.'},null,2);
   const prior=$('prior-worker');prior.hidden=!r.continuation;
   if(r.continuation){prior.href='data/'+encodeURIComponent(r.continuation.run_id)+'.json';prior.textContent='Download the pre-upgrade worker snapshot ('+fmt(r.continuation.preserved_results)+' retained results)';}
@@ -562,7 +562,8 @@ function chart(id,buckets){
 function renderTable(){
   if(!detailsReady){$('rows').replaceChildren();$('row-count').textContent=detailsError?'Recording details unavailable':'Loading recording details…';$('page-number').textContent='—';$('previous').disabled=true;$('next').disabled=true;return;}
   if(!data)return;let rows=data.rows.filter(r=>inScope(r));const term=$('search').value.toLowerCase(),filter=$('status-filter').value;
-  rows=rows.filter(r=>(filter==='all'||outcome(r)===filter)&&(!term||r.match_id.toLowerCase().includes(term)||JSON.stringify([r.unsupported,r.reason,r.differences,r.status==='checkpoint_mismatch'?checkpointReason(r):'']).toLowerCase().includes(term)));
+  const kind=$('engine-kind-filter').value||'all';
+  rows=rows.filter(r=>(filter==='all'||outcome(r)===filter)&&(kind==='all'||engineErrors(r).some(e=>e.engine_error.kind===kind))&&(!term||r.match_id.toLowerCase().includes(term)||JSON.stringify([r.unsupported,r.reason,r.engine_error,r.differences,r.status==='checkpoint_mismatch'?checkpointReason(r):'']).toLowerCase().includes(term)));
   const progress=r=>r.total_ticks?100*(r.completed_ticks||0)/r.total_ticks:-1;
   const ticks=r=>Number.isFinite(r.completed_ticks)&&r.completed_ticks>=0?r.completed_ticks:-1;
   const sort=$('sort').value;
@@ -596,13 +597,36 @@ function renderTable(){
       let reason=r.unsupported?.map(v=>v.reason).join('; ')||r.reason||'';
       if(r.status==='complete')reason=r.checkpoints_passed?'All usable recorded checkpoints matched.':'No usable recorded checkpoints.';
       if(r.ignored_commands_to_stop)reason+=' '+fmt(r.ignored_commands_to_stop)+' ignored command packets.';
-      diagnostic.textContent=reason;
+      if(engineErrors(r).length)diagnostic.append(engineErrorDetails(r,reason,data.run.sha));
+      else diagnostic.textContent=reason;
     }
     tr.append(first,status,ticks,percent,checkpoint,runtime,diagnostic);$('rows').append(tr);
   }
   $('row-count').textContent=fmt(rows.length)+' matching recordings';$('page-number').textContent=(page+1)+' / '+pages;$('previous').disabled=page===0;$('next').disabled=page===pages-1;
 }
+const engineKindNames={unsupported:'Unsupported mechanic',unreachable:'Engine invariant',missing_data:'Missing data',invalid_input:'Invalid input',io:'I/O failure'};
+function engineErrors(row){
+  const items=(row.unsupported||[]).flatMap(item=>[item,...(item.freezes||[])]);
+  if(row.engine_error)items.push(row);
+  return items.filter(item=>item.engine_error?.schema===2);
+}
+function engineErrorDetails(row,reason,sha){
+  const detail=el('details',undefined,'checkpoint-details');detail.append(el('summary',reason));
+  const seen=new Set();
+  for(const item of engineErrors(row)){
+    const error=item.engine_error,key=JSON.stringify([item.reason,error]);if(seen.has(key))continue;seen.add(key);
+    detail.append(el('p',(engineKindNames[error.kind]||error.kind)+' · '+error.phase+' · '+(item.reason||reason),'change-reason'));
+    const at=error.location,path=at?.repository_path;
+    if(typeof path==='string'&&/^crates\/[A-Za-z0-9_./-]+\.rs$/.test(path)&&!path.split('/').includes('..')&&Number.isInteger(at.line)&&at.line>0&&/^[0-9a-f]{40}$/.test(sha)){
+      const link=el('a',path+':'+at.line);link.href='https://github.com/librematch/genie/blob/'+sha+'/'+path+'#L'+at.line;link.target='_blank';link.rel='noopener';detail.append(link);
+    }
+    for(const entry of error.context||[])detail.append(el('p',entry.key+': '+entry.value,'change-reason'));
+    if(error.cause)detail.append(el('p','Cause: '+error.cause,'change-reason'));
+  }
+  return detail;
+}
 for(const key of corpusScopes)$(key).onclick=()=>{mode=key;modeChosen=true;page=0;changesPage=0;render();};
+$('engine-kind-filter').onchange=()=>{page=0;renderTable();};
 const showLoadError=error=>{$('error').hidden=false;$('error').textContent=error.message;};
 $('run-select').onchange=event=>{const pending=selectSnapshot(event.currentTarget.value);if(pending)pending.catch(showLoadError);};
 $('run-select').onblur=()=>{if(manifest)syncSelector(visibleRuns(manifest.runs),true);};

@@ -113,3 +113,5 @@ This repository contains the static dashboard and its report-deployment workflow
 Proprietary game assets, replay payloads, local configuration and credentials are not published here.
 
 Independent community project. Not affiliated with the Age of Empires developers or publisher.
+
+New-engine reports add structured `engine_error` diagnostics alongside legacy outcome/reason fields: kind, execution phase, repository-relative source location, ordered context entries and an optional cause. The recording table can filter by kind and expand details with links pinned to the measured engine commit. Legacy snapshots remain readable without invented context. Stopping summaries and versioned engine JSON distinguish kind plus fixed reason; compact version responses retain reason IDs and kinds while full occurrence context remains in the canonical `resolution.source_report`. Tick/checkpoint semantics and fixed cohort membership stay unchanged. Supplementary matching-build data tables are frozen and hashed with the original inputs, and input/adapter differences are disclosed in comparisons.
