@@ -617,7 +617,9 @@ function engineErrorDetails(row,reason,sha){
     const error=item.engine_error,key=JSON.stringify([item.reason,error]);if(seen.has(key))continue;seen.add(key);
     detail.append(el('p',(engineKindNames[error.kind]||error.kind)+' · '+error.phase+' · '+(item.reason||reason),'change-reason'));
     const at=error.location,path=at?.repository_path;
-    if(typeof path==='string'&&/^crates\/[A-Za-z0-9_./-]+\.rs$/.test(path)&&!path.split('/').includes('..')&&Number.isInteger(at.line)&&at.line>0&&/^[0-9a-f]{40}$/.test(sha)){
+    const adapter=typeof path==='string'&&/\/genie-oracle\/src\/progress\.rs$/.test(path);
+    if(adapter)detail.append(el('p','Benchmark adapter at '+path+':'+at.line,'change-reason'));
+    if(!adapter&&typeof path==='string'&&/^crates\/[A-Za-z0-9_./-]+\.rs$/.test(path)&&!path.split('/').includes('..')&&Number.isInteger(at.line)&&at.line>0&&/^[0-9a-f]{40}$/.test(sha)){
       const link=el('a',path+':'+at.line);link.href='https://github.com/librematch/genie/blob/'+sha+'/'+path+'#L'+at.line;link.target='_blank';link.rel='noopener';detail.append(link);
     }
     for(const entry of error.context||[])detail.append(el('p',entry.key+': '+entry.value,'change-reason'));
