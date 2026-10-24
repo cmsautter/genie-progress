@@ -286,11 +286,11 @@ function render(){
   for(const scope of corpusScopes){$(scope).classList.toggle('active',mode===scope);$(scope).setAttribute('aria-pressed',mode===scope);if(cohortScopes.includes(scope)){$(scope).hidden=!r[scope];if(r[scope])$(scope+'-count').textContent=fmt(r[scope].total);}}
   $('reference-count').textContent=fmt(r.fixed.total);$('catalog-count').textContent=fmt(r.growing.total);
   const scopeText={core500:'The frozen core of 500 recordings, selected for engine-feature and failure coverage.',extension500:'The frozen 500 additional recordings, disjoint from the core.',combined1000:'The frozen 1,000-recording baseline: core 500 plus 500 additional recordings.'};
-  $('scope-note').textContent=scopeText[mode]|| (mode==='fixed'?'Members of the original 5,604-recording reference scheduled in this snapshot. The legacy membership stays unchanged.':r.workflow?.full_corpus_requested?'All recordings frozen for this daily corpus sweep, including the fixed baseline.':r.workflow?'The 1,000 scheduled baseline recordings. Full-corpus work is requested separately at 04:00 Europe/Berlin.':'All eligible matches frozen at the start of this run. New discoveries enter the next run.');
+  $('scope-note').textContent=scopeText[mode]|| (mode==='fixed'?'Members of the original 5,604-recording reference scheduled in this snapshot. The legacy membership stays unchanged.':r.workflow&&r.growing.total===1000?'The 1,000 scheduled baseline recordings.':'All recordings scheduled in this run.');
   if(cohortScopes.includes(mode))$('scope-note').textContent+=' IDs and recording hashes stay fixed. This failure-focused set does not estimate whole-corpus success rates.';
   if(s.not_scheduled)$('scope-note').textContent+=' '+fmt(s.not_scheduled)+' members were not scheduled in this historical snapshot.';
   if(r.pilot)$('scope-note').textContent+=' This is a limited pilot; it does not cover the full cohort.';
-  $('run-state').textContent='● '+(r.status==='running'?(r.workflow?.full_corpus_requested&&r.combined1000?.finished===r.combined1000?.total?'Measuring daily corpus':'Measuring recordings'):r.status==='complete'?'Run complete':runStatus(r));
+  $('run-state').textContent='● '+(r.status==='running'?'Measuring recordings':r.status==='complete'?'Run complete':runStatus(r));
   renderSchedule(r);
   $('run-state').setAttribute('data-state',r.status);
   const commit=el('a',r.sha.slice(0,12));commit.href='https://github.com/librematch/genie/commit/'+r.sha;commit.target='_blank';commit.rel='noopener';$('commit').replaceChildren(commit);
@@ -336,13 +336,11 @@ function renderChangeMetric(run){
   $('advanced-sub').textContent=c?.comparable?fmt(c.regressed)+' regressions · '+fmt(c.comparable)+' comparable matches':'Reference for subsequent snapshots';
 }
 function renderSchedule(run){
-  const note=$('scheduling-note'),schedule=manifest?.workflow;
-  note.hidden=!schedule&&!run.scheduling;
-  const stages=(run.scheduling?.stages||[]).filter(s=>s.total);
-  const phaseNames={core500:'Core',extension500:'Additional',daily_corpus:'Daily tail'};
+  const note=$('scheduling-note');
+  const stages=(run.scheduling?.stages||[]).filter(s=>s.total&&['core500','extension500'].includes(s.id));
+  note.hidden=!stages.length;
+  const phaseNames={core500:'Core',extension500:'Additional'};
   let text=stages.map(s=>(phaseNames[s.id]||s.label)+': '+fmt(s.finished)+' / '+fmt(s.total)).join(' · ');
-  if(schedule)text+=(text?'. ':'')+'Full corpus daily at '+schedule.daily_time+' '+schedule.timezone+'; appended at the end when busy.';
-  if(run.workflow?.daily_sweeps?.length)text+=' Daily request: '+run.workflow.daily_sweeps.map(s=>s.local_date).join(', ')+'.';
   note.textContent=text;
 }
 function renderTiming(run,scope){
@@ -468,20 +466,22 @@ function renderCommandCoverage(){
   if(s.not_scheduled_recordings)state.textContent+=' · '+fmt(s.not_scheduled_recordings)+' members not scheduled';
   if(commandCoverageState!=='ready')state.textContent+=' · keeping the last verified census'+(commandCoverageError?': '+commandCoverageError:' while the update is unavailable');
   const reviewed=commandStandard==='reviewed',types=s.type_counts.implemented+(reviewed?0:s.type_counts.partial),occurrences=s.occurrence_counts.implemented+(reviewed?0:s.occurrence_counts.partial);
+  const assessed=value.classification.available;
   const percent=n=>n===null||n===undefined?'—':n.toFixed(n<1?2:1)+'%';
   $('command-types-label').textContent=reviewed?'VARIANTS WITH REVIEWED HANDLERS':'VARIANTS WITH A HANDLER';
   $('command-occurrences-label').textContent=reviewed?'OCCURRENCES OF REVIEWED VARIANTS':'OCCURRENCES WITH A HANDLER';
-  $('command-types-percent').textContent=percent(reviewed?s.implemented_types_percent:s.handler_types_percent);
-  $('command-occurrences-percent').textContent=percent(reviewed?s.implemented_occurrences_percent:s.handler_occurrences_percent);
-  $('command-types-count').textContent=fmt(types)+' of '+fmt(s.observed_types)+' observed command variants';
-  $('command-occurrences-count').textContent=fmt(occurrences)+' of '+fmt(s.command_occurrences)+' commands across complete recording bodies';
+  $('command-types-percent').textContent=assessed?percent(reviewed?s.implemented_types_percent:s.handler_types_percent):'—';
+  $('command-occurrences-percent').textContent=assessed?percent(reviewed?s.implemented_occurrences_percent:s.handler_occurrences_percent):'—';
+  $('command-types-count').textContent=assessed?fmt(types)+' of '+fmt(s.observed_types)+' observed command variants':'Assessment unavailable · '+fmt(s.observed_types)+' observed variants';
+  $('command-occurrences-count').textContent=assessed?fmt(occurrences)+' of '+fmt(s.command_occurrences)+' commands across complete recording bodies':fmt(s.command_occurrences)+' commands counted; implementation assessment unavailable';
   const label={implemented:'Reviewed handler',partial:'Partial / conditional',unsupported:'Unsupported',unknown:'Unknown'};
   $('command-breakdown').replaceChildren();
   for(const key of ['implemented','partial','unsupported','unknown']){
     const item=el('span',label[key]+': '+fmt(s.type_counts[key])+' variants · '+fmt(s.occurrence_counts[key])+' commands','command-state '+key);$('command-breakdown').append(item);
   }
   $('command-definition').textContent=reviewed?'Conservative implementation coverage: partial and conditional handlers are excluded. A reviewed handler does not certify later autonomous behaviour or checkpoint correctness.':'Handler presence includes partial and conditional implementations. This is a measure of implemented entry points; execution can still fail.';
-  $('command-census-note').textContent='Counts include the entire recording, including commands beyond the simulation stop. Unknown packets stay in the denominator; unreadable bodies are excluded. Camera, chat and internal unit/AI updates are excluded. '+(!value.classification.available?'Engine capability source is unavailable, so implementation status is unknown. ':'')+'Recorded game build 158041 · parser '+value.parser.key.slice(0,12)+' · updated '+date(value.generated)+'.';
+  const benchmark=manifest.runs.find(r=>r.id===value.run.id),build=value.benchmark?.game_build||158041;
+  $('command-census-note').textContent='Counts include the entire recording, including commands beyond the simulation stop. Unknown packets stay in the denominator; unreadable bodies are excluded. Camera, chat and internal unit/AI updates are excluded. '+(!assessed?'Engine capability source is unavailable, so implementation status is unknown. ':'Automatically assessed from this exact engine source. ')+'Game build '+build+' · engine '+value.run.sha.slice(0,12)+(benchmark?.build_profile?' · '+benchmark.build_profile:'')+' · benchmark '+(benchmark?.status==='complete'?'completed '+date(benchmark.finished):benchmark?.status||'status unavailable')+' · parser '+value.parser.key.slice(0,12)+' · assessment updated '+date(value.generated)+'.';
   const link=$('command-download');link.href='coverage/'+encodeURIComponent(value.run.id)+'.json';link.download='';
   const filter=$('command-filter').value||'gaps';
   const rows=s.rows.filter(r=>filter==='all'||filter==='gaps'&&r.status!=='implemented'||r.status===filter);

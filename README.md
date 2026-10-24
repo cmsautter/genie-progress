@@ -4,14 +4,14 @@
 
 Reproducible progress measurements for [GenieRust](https://github.com/librematch/genie), an independent reimplementation of the Age of Empires II: Definitive Edition engine.
 
-## Fixed baseline and daily corpus
+## Fixed baseline
 
 * **Core 500:** the default view, with immutable recording IDs and SHA256 hashes chosen for engine-feature and failure coverage.
 * **Additional 500:** a disjoint fixed extension. **Combined 1,000** contains both sets and is tested for ordinary engine revisions.
-* **Run corpus:** the work scheduled in that run. The full existing corpus is requested once per local day at **04:00 Europe/Berlin**. When busy, its outstanding recordings are appended at the end; when idle, it starts a daily sweep. Requests survive restarts and are deduplicated.
+* **Run corpus:** the recordings actually scheduled in that run. Ordinary engine revisions use the fixed 1,000; historical larger runs remain available.
 * **Legacy reference:** members of the original frozen **5,604 recordings** scheduled in that snapshot, retained for historical comparisons. Full legacy/corpus runs no longer start automatically for each engine revision.
 
-The core runs before the additional set, with shorter last failures first inside each bucket. Both core and combined completion request early publication. Membership stays fixed as the engine improves, including cases that become successful. The feature-focused sample is a stable comparison baseline; its success rate must not be extrapolated to the full corpus. The separate daily sweep provides whole-corpus results.
+The core runs before the additional set, with shorter last failures first inside each bucket. Both core and combined completion request early publication. Membership stays fixed as the engine improves, including cases that become successful. The feature-focused sample is a stable comparison baseline; its success rate must not be extrapolated to the full corpus.
 
 The initial reference targets full internal build **158041**, public game version **101.103.26969.0**, using matching game data. Every run identifies its upstream engine commit, diagnostic instrumentation, toolchain, architecture, data fingerprints and replay hashes.
 
@@ -55,7 +55,7 @@ The same categories appear in the stopping-summary JSON, with a `checkpoint_word
 
 The command census reads whole recording bodies, including commands beyond the simulation's first stop. Its two percentages show **coverage of distinct recorded command variants** and **coverage weighted by their total occurrence counts**. Both follow the selected engine snapshot and fixed or growing corpus.
 
-The default definition counts reviewed handlers only. **Handler presence, including partial** provides a broader measure of implemented entry points. Partial or conditional implementations, explicit unsupported branches and unknown packets remain separate. A handler does not establish successful execution, checkpoint agreement or complete support for later autonomous mechanics. The reviewed count is deliberately conservative; handlers that have not been reviewed as complete stay partial.
+The default definition counts reviewed handlers only. **Handler presence, including partial** provides a broader measure of implemented entry points. Partial or conditional implementations, explicit unsupported branches and unknown packets remain separate. A handler does not establish successful execution, checkpoint agreement or complete support for later autonomous mechanics. The reviewed count is deliberately conservative; handlers that have not been reviewed as complete stay partial. Classification is automatically refreshed for each engine revision and when classifier rules change. Both the original and reorganized engine source layouts are supported. Unavailable assessments show a dash while retaining valid command frequency counts. The existing snapshot selector chooses the exact engine assessment; the panel identifies the game build, engine commit, benchmark profile/completion and assessment timestamp. JSON includes classifier policy and inspected-source fingerprints, separately from parser provenance.
 
 The usage ranking includes the entire recording, with filters for unsupported, partial and unknown variants. GAME subcommands, unit-order actions, stances, remembered selections and farm construction are distinguished. **After stop** counts commands in strictly later updates where a comparable simulation horizon exists; it excludes the failure update itself and is unavailable when no comparable horizon exists. Unknown command packets stay in the denominator. Bodies that cannot be scanned completely are excluded and explicitly counted. Camera, chat, checkpoints and internal unit/AI updates are outside these command metrics.
 
