@@ -179,6 +179,8 @@ function visibleRuns(runs){
 function runName(r){return r.imported?'Historical baseline':r.pilot?'Pilot '+r.sha.slice(0,8):r.sha.slice(0,8);}
 function runStatus(r){
   if(r.status==='build_failed')return {adapter:'Adapter update needed',setup:'Worker setup failed',dependencies:'Dependency fetch failed',compilation:'Build failed',artifact:'Build output missing'}[r.failure?.stage]||'Build failed';
+  if(r.status==='running'&&r.execution?.phase==='retrying')return 'Retrying timeouts';
+  if(r.status==='running'&&r.execution?.phase==='finalizing')return 'Finalizing results';
   return {running:'In progress',queued:'Queued',building:'Preparing and building engine',complete:'Complete',continued:'Archived worker',aborted:'Aborted'}[r.status]||r.status;
 }
 function runLabel(r){
@@ -290,16 +292,18 @@ function render(){
   if(cohortScopes.includes(mode))$('scope-note').textContent+=' IDs and recording hashes stay fixed. This failure-focused set does not estimate whole-corpus success rates.';
   if(s.not_scheduled)$('scope-note').textContent+=' '+fmt(s.not_scheduled)+' members were not scheduled in this historical snapshot.';
   if(r.pilot)$('scope-note').textContent+=' This is a limited pilot; it does not cover the full cohort.';
-  $('run-state').textContent='● '+(r.status==='running'?'Measuring recordings':r.status==='complete'?'Run complete':runStatus(r));
+  const retry=r.status==='running'&&r.execution?.phase==='retrying'?r.execution:null;
+  $('run-state').textContent='● '+(retry?'Timeout retries '+fmt(retry.retry_finished)+' / '+fmt(retry.retry_total)+' · '+fmt(retry.active_sessions)+' active':r.status==='running'&&r.execution?.phase==='finalizing'?'Finalizing results':r.status==='running'?'Measuring recordings':r.status==='complete'?'Run complete':runStatus(r));
   renderSchedule(r);
   $('run-state').setAttribute('data-state',r.status);
   const commit=el('a',r.sha.slice(0,12));commit.href='https://github.com/librematch/genie/commit/'+r.sha;commit.target='_blank';commit.rel='noopener';$('commit').replaceChildren(commit);
   $('run-time').textContent=(r.imported?'Imported historical scan · ':'')+r.architecture+' · '+date(r.finished||r.created);
   if(r.build_profile)$('run-time').textContent+=' · '+r.build_profile;
-  if(r.case_workers)$('run-time').textContent+=' · up to '+fmt(r.case_workers)+' processes';
+  if(r.case_workers)$('run-time').textContent+=' · up to '+fmt(retry?(retry.maximum_sessions||Math.min(r.case_workers,10)):r.case_workers)+' processes';
   if(r.continuation)$('run-time').textContent+=' · '+fmt(r.continuation.preserved_results)+' results retained from prior worker';
   $('run-progress').style.width=(100*s.finished/Math.max(1,s.total))+'%';
   $('measured').textContent=fmt(s.finished);$('measured-sub').textContent='of '+fmt(s.total)+' in this snapshot';
+  if(retry)$('measured-sub').textContent+=' · initial results; timeout retries still running';
   $('checked').textContent=fmt(s.counts.complete_checked||0);
   $('checked-sub').textContent=fmt(s.counts.complete_unchecked||0)+' end reached without usable checkpoints';
   $('median').textContent=s.median_percent===null?'—':s.median_percent.toFixed(s.median_percent<1?3:1)+'%';
@@ -308,6 +312,7 @@ function render(){
   renderChangeMetric(r);
   const waiting=r.status==='build_failed'?'Not run':r.status==='aborted'?'Not measured · run aborted':'Not measured yet';
   $('outcome-note').textContent=fmt(s.total-s.finished)+(r.status==='build_failed'?' not run':r.status==='aborted'?' unmeasured':' pending');
+  if(retry)$('outcome-note').textContent=fmt(retry.retry_total-retry.retry_finished)+' timeout retries remaining across the run · up to '+fmt(retry.retry_seconds)+'s each'+(retry.retry_tick_seconds?' · '+fmt(retry.retry_tick_seconds)+'s per update':'');
   $('outcome-bar').replaceChildren();$('outcome-legend').replaceChildren();
   const counts={...s.counts};if(s.total>s.finished)counts.pending=s.total-s.finished;
   for(const key of orderedOutcomes(Object.keys(counts))){const count=counts[key],labelText=key==='pending'?waiting:names[key]||key;const bar=el('div');bar.style.width=100*count/Math.max(1,s.total)+'%';bar.style.background=color(key);bar.title=labelText+': '+fmt(count);$('outcome-bar').append(bar);const label=el('span');const swatch=el('i');swatch.style.background=color(key);label.append(swatch,document.createTextNode(labelText),el('b',fmt(count)));$('outcome-legend').append(label);}
@@ -598,7 +603,11 @@ function renderTable(){
       if(r.status==='complete')reason=r.checkpoints_passed?'All usable recorded checkpoints matched.':'No usable recorded checkpoints.';
       if(r.ignored_commands_to_stop)reason+=' '+fmt(r.ignored_commands_to_stop)+' ignored command packets.';
       if(engineErrors(r).length)diagnostic.append(engineErrorDetails(r,reason,data.run.sha));
-      else diagnostic.textContent=reason;
+      else {
+        diagnostic.textContent=reason;
+        if(r.status==='timeout'&&r.timeout_kind==='simulation_step')
+          diagnostic.append(el('p','Update '+fmt(r.step_tick)+' exceeded '+fmt(r.step_limit_seconds)+'s. '+fmt(r.completed_ticks)+' completed updates retained.','change-reason'));
+      }
     }
     tr.append(first,status,ticks,percent,checkpoint,runtime,diagnostic);$('rows').append(tr);
   }
