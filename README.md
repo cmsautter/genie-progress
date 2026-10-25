@@ -108,6 +108,8 @@ Each response includes `resolution` (requested and measured SHA, `exact` or `fir
 
 ## Repository contents
 
+Dashboard changes can be checked locally with `node --test tests/dashboard.test.cjs` (Node.js 20 or newer). The suite covers snapshot loading, frozen cohorts, diagnostics, report verification, TPS sorting, themes and responsive chart sizing. An optional `REAL_REPORT_DIRECTORY` containing a report bundle's `manifest.json`, `data`, `coverage` and `changes` enables the full-report integration check. Also inspect dark and light themes at desktop and phone widths when changing layout or colours.
+
 This repository contains the static dashboard and its report-deployment workflow. Sanitized report snapshots are available in the **Benchmark report snapshots** prerelease. The worker implementation is maintained separately.
 
 Proprietary game assets, replay payloads, local configuration and credentials are not published here.
