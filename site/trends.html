@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="GenieRust engine revision trends across the frozen 500+500 replay baseline.">
+  <script>try{const t=localStorage.getItem('genie-theme');document.documentElement.dataset.theme=t==='light'||t==='dark'?t:matchMedia('(prefers-color-scheme: light)').matches?'light':'dark';}catch{document.documentElement.dataset.theme='dark';}</script>
+  <title>Engine revision trends · Genie Replay Lab</title>
+  <link rel="stylesheet" href="style.css?v=trend-page-22">
+  <script src="app.js?v=trend-page-22" defer></script>
+</head>
+<body data-page="trends">
+  <header class="topbar"><a class="brand" href="index.html"><span class="mark">G</span> GENIE <span class="brand-light">REPLAY LAB</span></a><div class="top-links"><a href="https://github.com/librematch/genie">Engine ↗</a><a href="https://github.com/cmsautter/genie-progress">About & source ↗</a><button id="theme-toggle" class="theme-toggle">Light theme</button><span id="health" class="health">Loading worker status</span></div></header>
+  <main>
+    <a class="back-link" href="index.html">← Recording results</a>
+    <section class="trend-intro"><p class="eyebrow">ACROSS ENGINE BUILDS</p><h1>Engine revision trends</h1><p class="lede">Compare progress across the frozen 500 + 500 baseline.</p></section>
+    <section class="controls" aria-label="Trend cohort"><div class="tabs" role="group" aria-label="Frozen recording cohort"><button id="core500" aria-pressed="false">Core 500</button><button id="extension500" aria-pressed="false">Additional 500</button><button id="combined1000" aria-pressed="false">Combined 1,000</button></div></section>
+    <p id="scope-note" class="scope-note"></p>
+    <p id="refresh-note" class="refresh-note" role="status" aria-live="polite" hidden></p>
+    <div id="error" class="error" role="status" aria-live="polite" hidden></div>
+    <p id="trend-empty" class="scope-note" role="status">Loading engine history…</p>
+    <section id="trend" class="panel engine-trend" hidden><div class="panel-heading"><div><p class="eyebrow">ENGINE REVISION TREND</p><h2 id="trend-title">Frozen cohorts across engine commits</h2></div><span id="trend-note"></span></div><div class="trend-grid"><figure><figcaption>Outcome mix</figcaption><div id="trend-outcomes" class="chart trend-chart" role="group" aria-label="Outcome shares of the selected frozen cohort for each engine commit"></div><div id="trend-legend" class="legend"></div></figure><figure><figcaption>Median simulation ticks reached</figcaption><div id="trend-ticks" class="chart trend-chart" role="group" aria-label="Median simulation ticks reached for the selected frozen cohort"></div></figure></div><p id="trend-readout" class="chart-readout" role="status" aria-live="polite"></p><div class="table-scroll"><table class="trend-table"><thead><tr><th>Engine commit</th><th>Tested</th><th>Advanced / regressed</th><th>End reached · checkpoints match</th><th>Unsupported update</th><th>Checkpoint mismatch</th><th title="All remaining outcomes, excluding checked completions and the two named stop types.">Other</th><th>Median ticks</th></tr></thead><tbody id="trend-rows"></tbody></table></div><p class="chart-note">Dates label test days; each column is one engine revision. Hover or focus a point for the exact engine version. Completed full runs use the same frozen recording membership. One run per engine commit; release builds are preferred. Core, Additional and Combined views use their own outcomes, medians and comparison counts. Other includes unchecked completions, initialization, parsing, chapter, timeout and remaining failures. Matched counts identify which recordings were paired with the stated baseline; mixed and other changes remain in the comparison report. Build profiles and test limits can differ: inspect snapshot provenance and comparison caveats. Select a column or commit to open that snapshot.</p></section>
+
+    <footer><p>These fixed sets emphasize engine features and failures; their success rate does not estimate whole-corpus success rates. Checkpoints compare partial state checks.</p><a href="index.html">Recording results →</a></footer>
+  </main>
+</body>
+</html>

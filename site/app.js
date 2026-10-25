@@ -27,6 +27,12 @@ let manifest, data, mode = 'fixed', page = 0, selected = '', request = 0, follow
 const cohortScopes=['core500','extension500','combined1000'];
 const corpusScopes=[...cohortScopes,'growing','fixed'];
 let modeChosen=false;
+const trendPage=document.body?.dataset?.page==='trends';
+const pageQuery=new URLSearchParams(globalThis.location?.search||'');
+const requestedScope=pageQuery.get('cohort');
+if(cohortScopes.includes(requestedScope)){mode=requestedScope;modeChosen=true;}
+const requestedRun=pageQuery.get('run');
+if(!trendPage&&/^[A-Za-z0-9_-]+$/.test(requestedRun||'')){selected=requestedRun;followLatest=false;}
 const inScope=(row,scope=mode)=>scope==='growing'||(scope==='fixed'?!!row.fixed:row.cohorts?.includes(scope));
 let manifestRequest=0, detailsReady=false, detailsLoading=false, detailsError='', pendingKey='', detailsController;
 let selectorKey='';
@@ -238,9 +244,10 @@ async function refresh(){
       value=prior;
     }else{refreshNote('');rememberManifest(value);}
     manifest=value;
-    if(!modeChosen)mode=manifest.cohorts?'core500':'fixed';
+    if(!modeChosen)mode=trendPage?'combined1000':manifest.cohorts?'core500':'fixed';
     const age=manifest.heartbeat ? Date.now()-new Date(manifest.heartbeat).getTime():Infinity;
     $('health').textContent=age<180000?'Worker reporting':age<7200000?'Report updated '+Math.round(age/60000)+'m ago':'Worker report stale';$('health').className='health '+(age<180000?'alive':age>=7200000?'stale':'');
+    if(trendPage){renderTrendPage();return;}
     $('reference-count').textContent=fmt(manifest.reference_count);$('catalog-count').textContent=fmt(manifest.catalog_count);
     const runs=visibleRuns(manifest.runs);
     renderArchive(manifest.runs,runs);
@@ -290,7 +297,8 @@ function selectSnapshot(id){
   followLatest=false;selected=id;page=0;syncSelector(visibleRuns(manifest.runs),true);return loadDetails(run);
 }
 function render(){
-  if(!data)return;const r=data.run;if(!r[mode])mode='fixed';const s=r[mode];renderTrend();
+  if(!data)return;const r=data.run;if(!r[mode])mode='fixed';const s=r[mode];
+  $('trend-link').href=trendURL(mode);
   for(const scope of corpusScopes){$(scope).classList.toggle('active',mode===scope);$(scope).setAttribute('aria-pressed',mode===scope);if(cohortScopes.includes(scope)){$(scope).hidden=!r[scope];if(r[scope])$(scope+'-count').textContent=fmt(r[scope].total);}}
   $('reference-count').textContent=fmt(r.fixed.total);$('catalog-count').textContent=fmt(r.growing.total);
   const scopeText={core500:'The frozen core of 500 recordings, selected for engine-feature and failure coverage.',extension500:'The frozen 500 additional recordings, disjoint from the core.',combined1000:'The frozen 1,000-recording baseline: core 500 plus 500 additional recordings.'};
@@ -544,11 +552,18 @@ function svgCanvas(W,H){
   return {svg,node};
 }
 // One completed run per engine commit for the selected immutable cohort.
-function openSnapshot(id){const pending=selectSnapshot(id);if(pending)pending.catch(showLoadError);}
+function trendURL(scope=mode){return 'trends.html?'+new URLSearchParams({cohort:cohortScopes.includes(scope)?scope:'combined1000'});}
+function snapshotURL(id,scope=mode){return 'index.html?'+new URLSearchParams({run:id,cohort:scope});}
+function openSnapshot(id){if(trendPage){globalThis.location.href=snapshotURL(id);return;}const pending=selectSnapshot(id);if(pending)pending.catch(showLoadError);}
 const trendLabels={core500:'Core 500',extension500:'Additional 500',combined1000:'Combined 1,000'};
+function renderTrendPage(){
+  for(const scope of cohortScopes){$(scope).classList.toggle('active',mode===scope);$(scope).setAttribute('aria-pressed',mode===scope);$(scope).disabled=!manifest.cohorts?.[scope];}
+  $('scope-note').textContent='Compare the same '+(mode==='combined1000'?'1,000':'500')+' frozen recordings across completed engine measurements.';
+  renderTrend();
+}
 function trendRuns(){
   if(!cohortScopes.includes(mode))return [];
-  const membership=data?.run[mode]?.membership_sha256,total=mode==='combined1000'?1000:500;
+  const membership=manifest?.cohorts?.[mode]?.membership_sha256,total=mode==='combined1000'?1000:500;
   if(!/^[a-f0-9]{64}$/.test(membership||''))return [];
   const best=new Map();
   for(const r of [...manifest.runs].sort((a,b)=>Date.parse(b.created)-Date.parse(a.created))){
@@ -567,10 +582,26 @@ function trendComparison(r){
 }
 function trendDescription(r){
   const f=r[mode],c=trendComparison(r);
-  return runName(r)+' · '+trendLabels[mode]+' · '+(r.build_profile||'historical')+' · '+date(r.finished||r.created)+' · median '+fmt(f.median_ticks)+' ticks · '+orderedOutcomes(Object.keys(f.counts)).map(k=>(names[k]||k)+': '+fmt(f.counts[k])).join(' · ')+(c?' · advanced '+fmt(c.advanced)+', regressed '+fmt(c.regressed)+' · '+fmt(c.compared_recordings)+' / '+fmt(f.total)+' matched vs '+c.previous_sha.slice(0,8):' · Scoped comparison unavailable');
+  return r.sha+' · '+trendLabels[mode]+' · '+(r.build_profile||'historical')+' · '+date(r.finished||r.created)+' · median '+fmt(f.median_ticks)+' ticks · '+orderedOutcomes(Object.keys(f.counts)).map(k=>(names[k]||k)+': '+fmt(f.counts[k])).join(' · ')+(c?' · advanced '+fmt(c.advanced)+', regressed '+fmt(c.regressed)+' · '+fmt(c.compared_recordings)+' / '+fmt(f.total)+' matched vs '+c.previous_sha.slice(0,8):' · Scoped comparison unavailable');
+}
+function trendDateLabels(runs,L,step){
+  const dated=runs.map(r=>new Date(r.finished||r.created)),years=new Set(dated.map(d=>d.getFullYear()));
+  const groups=[];
+  dated.forEach((d,i)=>{
+    const day=[d.getFullYear(),d.getMonth(),d.getDate()].join('-'),last=groups.at(-1);
+    if(last?.day===day){last.end=i;return;}
+    const label=String(d.getDate()).padStart(2,'0')+'.'+String(d.getMonth()+1).padStart(2,'0')+(years.size>1?'.'+String(d.getFullYear()).slice(-2):'');
+    groups.push({day,label,start:i,end:i});
+  });
+  const candidates=groups.map(g=>({...g,x:L+((g.start+g.end)/2+.5)*step})),labels=[],gap=years.size>1?80:58;
+  for(let i=0;i<candidates.length;i++){
+    const c=candidates[i],last=candidates.at(-1);
+    if(i===0||i===candidates.length-1||c.x-labels.at(-1).x>=gap&&last.x-c.x>=gap)labels.push(c);
+  }
+  return labels;
 }
 function trendColumns(id,runs,draw){
-  const W=Math.max(320,$(id).clientWidth||640),H=236,L=48,R=14,T=20,B=30,plotW=W-L-R,plotH=H-T-B,baseline=T+plotH,step=plotW/runs.length;
+  const W=Math.max(320,$(id).clientWidth||640),H=252,L=48,R=14,T=20,B=42,plotW=W-L-R,plotH=H-T-B,baseline=T+plotH,step=plotW/runs.length;
   const {svg,node}=svgCanvas(W,H),readout=$('trend-readout');
   draw({node,L,T,W,step,plotH,baseline});
   runs.forEach((r,i)=>{
@@ -579,14 +610,15 @@ function trendColumns(id,runs,draw){
     node('title',{},description,group);
     node('rect',{x,y:T,width:step,height:plotH,fill:'transparent','class':'trend-hitbox'},undefined,group);
     draw({node,group,r,i,x,step,L,T,W,plotH,baseline});
-    node('text',{x:x+step/2,y:baseline+15,'text-anchor':'middle'},r.imported?'baseline':r.sha.slice(0,7),group);
     const inspect=()=>{readout.textContent=description;};group.addEventListener('pointerenter',inspect);group.addEventListener('focus',inspect);
     group.addEventListener('click',()=>openSnapshot(r.id));group.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();openSnapshot(r.id);}});
   });
+  for(const label of trendDateLabels(runs,L,step))node('text',{x:label.x,y:baseline+23,'text-anchor':'middle','class':'trend-date-label'},label.label);
   $(id).replaceChildren(svg);
 }
 function renderTrend(){
-  const runs=trendRuns();$('trend').hidden=runs.length<2;if(runs.length<2)return;
+  const runs=trendRuns();$('trend').hidden=runs.length<2;$('trend-empty').hidden=runs.length>=2;
+  if(runs.length<2){$('trend-empty').textContent='At least two completed full measurements of this frozen cohort are needed to show a trend.';return;}
   const total=runs[runs.length-1][mode].total,series=orderedOutcomes(runs.flatMap(r=>Object.keys(r[mode].counts)));
   $('trend-title').textContent=trendLabels[mode]+' across engine commits';
   $('trend-note').textContent=fmt(runs.length)+' engine commits · '+fmt(total)+' frozen recordings';
@@ -616,12 +648,14 @@ function renderTrend(){
   $('trend-legend').replaceChildren(...series.map(k=>{const label=el('span'),swatch=el('i');swatch.style.background=color(k);label.append(swatch,document.createTextNode(names[k]||k));return label;}));
   const rows=[];
   for(const r of [...runs].reverse()){
-    const tr=el('tr'),c=trendComparison(r),f=r[mode],open=el('button',runName(r),'text-button trend-open');
-    open.onclick=()=>openSnapshot(r.id);if(r.id===selected){tr.className='selected';open.setAttribute('aria-current','true');}
+    const tr=el('tr'),c=trendComparison(r),f=r[mode],open=el('a',runName(r),'trend-open');open.href=snapshotURL(r.id);
     const commit=el('td');commit.append(open,el('small',r.build_profile||'Historical'));
     const compared=c?el('td'):el('td','—');
-    if(c){compared.append(el('span',signed(c.advanced)+' / '+(c.regressed?'−'+fmt(c.regressed):'0'),c.regressed?'negative':'positive'),el('small',fmt(c.compared_recordings)+' / '+fmt(f.total)+' matched · vs '+c.previous_sha.slice(0,8)));if(c.warnings.length){compared.append(el('small','Comparison caveat'));compared.title=c.warnings.join('\n');}}
-    tr.append(commit,el('td',date(r.finished||r.created)),compared,el('td',fmt(f.counts.complete_checked||0)),el('td',fmt(f.counts.initialization_unsupported||0)),el('td',fmt(f.median_ticks)));
+    if(c){compared.append(el('span',signed(c.advanced),c.advanced?'positive':'trend-neutral'),el('span',' / ','trend-neutral'),el('span',c.regressed?'−'+fmt(c.regressed):'0',c.regressed?'negative':'trend-neutral'),el('small',fmt(c.compared_recordings)+' / '+fmt(f.total)+' matched · vs '+c.previous_sha.slice(0,8)));if(c.warnings.length){compared.append(el('small','Comparison caveat'));compared.title=c.warnings.join('\n');}}
+    const rest=Object.entries(f.counts).filter(([key])=>!['complete_checked','unsupported','checkpoint_mismatch'].includes(key));
+    const other=el('td',fmt(rest.reduce((sum,[,count])=>sum+count,0)));
+    other.title=rest.filter(([,count])=>count).map(([key,count])=>(names[key]||key)+': '+fmt(count)).join('\n')||'No other outcomes';
+    tr.append(commit,el('td',date(r.finished||r.created)),compared,el('td',fmt(f.counts.complete_checked||0)),el('td',fmt(f.counts.unsupported||0)),el('td',fmt(f.counts.checkpoint_mismatch||0)),other,el('td',fmt(f.median_ticks)));
     rows.push(tr);
   }
   $('trend-rows').replaceChildren(...rows);
@@ -736,17 +770,20 @@ function engineErrorDetails(row,reason,sha){
   }
   return detail;
 }
+const showLoadError=error=>{$('error').hidden=false;$('error').textContent=error.message;};
+function showTheme(){const light=document.documentElement.dataset.theme==='light';$('theme-toggle').textContent=light?'Dark theme':'Light theme';}
+$('theme-toggle').onclick=()=>{const next=document.documentElement.dataset.theme==='light'?'dark':'light';document.documentElement.dataset.theme=next;try{localStorage.setItem('genie-theme',next);}catch{}showTheme();};showTheme();
+globalThis.addEventListener?.('resize',()=>{if(trendPage&&manifest)renderTrend();else if(data)renderCharts(data.run[mode]);});
+if(trendPage){
+  for(const scope of cohortScopes)$(scope).onclick=()=>{mode=scope;modeChosen=true;renderTrendPage();try{globalThis.history?.replaceState(null,'',trendURL());}catch{}};
+}else{
 for(const key of corpusScopes)$(key).onclick=()=>{mode=key;modeChosen=true;page=0;changesPage=0;render();};
 $('engine-kind-filter').onchange=()=>{page=0;renderTable();};
-const showLoadError=error=>{$('error').hidden=false;$('error').textContent=error.message;};
 $('run-select').onchange=event=>{const pending=selectSnapshot(event.currentTarget.value);if(pending)pending.catch(showLoadError);};
 $('run-select').onblur=()=>{if(manifest)syncSelector(visibleRuns(manifest.runs),true);};
 $('retry-details').onclick=()=>{detailsCache.delete(selected);loadDetails(manifest.runs.find(r=>r.id===selected)).catch(showLoadError);};
 for(const id of ['search','status-filter','sort'])$(id).addEventListener('input',()=>{page=0;renderTable();});
 $('previous').onclick=()=>{page--;renderTable();};$('next').onclick=()=>{page++;renderTable();};
-function showTheme(){const light=document.documentElement.dataset.theme==='light';$('theme-toggle').textContent=light?'Dark theme':'Light theme';}
-$('theme-toggle').onclick=()=>{const next=document.documentElement.dataset.theme==='light'?'dark':'light';document.documentElement.dataset.theme=next;try{localStorage.setItem('genie-theme',next);}catch{}showTheme();};showTheme();
-globalThis.addEventListener?.('resize',()=>{if(data){renderCharts(data.run[mode]);renderTrend();}});
 $('provenance').onclick=()=>$('method').showModal();$('close-method').onclick=()=>$('method').close();
 $('chart-scale').onchange=event=>{chartScale=event.currentTarget.value;if(data)renderCharts(data.run[mode]);};
 $('chart-outcome').onchange=event=>{chartOutcome=event.currentTarget.value;if(data)renderCharts(data.run[mode]);};
@@ -757,4 +794,6 @@ $('command-show-all').onclick=()=>{commandShowAll=!commandShowAll;renderCommandC
 for(const id of ['changes-search','changes-filter','changes-sort'])$(id).addEventListener('input',()=>{changesPage=0;renderReplayChanges();});
 $('changes-previous').onclick=()=>{changesPage--;renderReplayChanges();};
 $('changes-next').onclick=()=>{changesPage++;renderReplayChanges();};
-loadCheckpointDefinitions();refresh();setInterval(refresh,60000);
+loadCheckpointDefinitions();
+}
+refresh();setInterval(refresh,60000);
