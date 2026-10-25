@@ -3,6 +3,12 @@ const $ = id => document.getElementById(id);
 const fmt = n => typeof n === 'number' ? n.toLocaleString('en-US',{maximumFractionDigits:1}) : '—';
 const elapsedSeconds = value => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
 const replayTime = value => elapsedSeconds(value) === null ? '—' : value.toLocaleString('en-US',{minimumFractionDigits:1,maximumFractionDigits:1})+'s';
+function averageTPS(row){
+  const seconds=elapsedSeconds(row.runtime_seconds),ticks=row.completed_ticks;
+  if(seconds===null||seconds===0||!Number.isFinite(ticks)||ticks<0)return null;
+  const speed=ticks/seconds;
+  return Number.isFinite(speed)?speed:null;
+}
 function runDuration(value){
   if(elapsedSeconds(value)===null)return '—';
   const tenths=Math.round(value*10),hours=Math.floor(tenths/36000),minutes=Math.floor(tenths%36000/600),seconds=(tenths%600/10).toFixed(1);
@@ -18,6 +24,10 @@ function orderedOutcomes(keys){
 }
 const outcome = r => r.status === 'complete' ? (r.checkpoints_passed ? 'complete_checked':'complete_unchecked') : r.status;
 let manifest, data, mode = 'fixed', page = 0, selected = '', request = 0, followLatest = true;
+const cohortScopes=['core500','extension500','combined1000'];
+const corpusScopes=[...cohortScopes,'growing','fixed'];
+let modeChosen=false;
+const inScope=(row,scope=mode)=>scope==='growing'||(scope==='fixed'?!!row.fixed:row.cohorts?.includes(scope));
 let manifestRequest=0, detailsReady=false, detailsLoading=false, detailsError='', pendingKey='', detailsController;
 let selectorKey='';
 let chartScale='log',chartOutcome='all',chartSelectorKey='';
@@ -29,6 +39,7 @@ const detailsCache=new Map();
 let checkpointDefinitions;
 const openMismatches=new Set();
 const manifestStorageKey='genie-replay-lab:latest-verified-manifest:v1';
+const changesStorageKey='genie-replay-lab:latest-verified-changes:v1';
 let fetchNonce=0;
 function refreshNote(text){$('refresh-note').textContent=text;$('refresh-note').hidden=!text;}
 function validManifest(value){
@@ -44,6 +55,20 @@ function storedManifest(){
 function rememberManifest(value){
   try{globalThis.sessionStorage?.setItem(manifestStorageKey,JSON.stringify(value));}catch{/* Storage is optional. */}
 }
+function validReplayChanges(value,run){
+  return value?.schema===1&&value.run?.id===run.id&&value.run.sha===run.sha&&Array.isArray(value.rows)
+    &&(!value.available||(value.fixed?.total_recordings===run.fixed.total&&value.growing?.total_recordings===run.growing.total))
+    &&(!run.changes||value.baseline?.id===(run.changes.baseline_id||undefined));
+}
+function storedChanges(run){
+  try{
+    const entry=JSON.parse(globalThis.sessionStorage?.getItem(changesStorageKey)||'null');
+    return entry?.runId===run.id&&typeof entry.version==='string'&&validReplayChanges(entry.value,run)?entry:null;
+  }catch{return null;}
+}
+function rememberChanges(run,version,value){
+  try{globalThis.sessionStorage?.setItem(changesStorageKey,JSON.stringify({runId:run.id,version,value}));}catch{/* Storage is optional. */}
+}
 function olderManifest(value,previous){
   // Request IDs protect against late network requests, not old bytes returned
   // by a cache for a newer request. Compare the publication itself as well.
@@ -53,7 +78,7 @@ function olderManifest(value,previous){
   const latest=m=>visibleRuns(m.runs)[0];
   if(latest(value)&&latest(previous)&&Date.parse(latest(value).created)<Date.parse(latest(previous).created))return true;
   const current=new Map(value.runs.map(run=>[run.id,run]));
-  const rank={queued:0,building:1,running:2,complete:3,build_failed:3,continued:3};
+  const rank={queued:0,building:1,running:2,complete:3,build_failed:3,continued:3,aborted:3};
   for(const old of previous.runs){
     const run=current.get(old.id);if(!run)continue;
     if(['fixed','growing'].some(scope=>run[scope].finished<old[scope].finished))return true;
@@ -123,7 +148,7 @@ function checkpointDetails(row){
   return details;
 }
 function renderCheckpointGroups(){
-  const groups=new Map(),rows=detailsReady?data.rows.filter(r=>r.status==='checkpoint_mismatch'&&(mode==='growing'||r.fixed)):[];
+  const groups=new Map(),rows=detailsReady?data.rows.filter(r=>r.status==='checkpoint_mismatch'&&inScope(r)):[];
   for(const row of rows){
     const checks=checkpointCategories(row);
     for(const check of checks.length?checks:[{word:null,label:'Check details unavailable'}]){
@@ -160,7 +185,9 @@ function visibleRuns(runs){
 function runName(r){return r.imported?'Historical baseline':r.pilot?'Pilot '+r.sha.slice(0,8):r.sha.slice(0,8);}
 function runStatus(r){
   if(r.status==='build_failed')return {adapter:'Adapter update needed',setup:'Worker setup failed',dependencies:'Dependency fetch failed',compilation:'Build failed',artifact:'Build output missing'}[r.failure?.stage]||'Build failed';
-  return {running:'In progress',queued:'Queued',building:'Preparing and building engine',complete:'Complete',continued:'Archived worker'}[r.status]||r.status;
+  if(r.status==='running'&&r.execution?.phase==='retrying')return 'Retrying timeouts';
+  if(r.status==='running'&&r.execution?.phase==='finalizing')return 'Finalizing results';
+  return {running:'In progress',queued:'Queued',building:'Preparing and building engine',complete:'Complete',continued:'Archived worker',aborted:'Aborted'}[r.status]||r.status;
 }
 function runLabel(r){
   const profile=r.imported?'':({release:'Release',forced:'Profiling'}[r.build_profile]||r.build_profile||'');
@@ -211,6 +238,7 @@ async function refresh(){
       value=prior;
     }else{refreshNote('');rememberManifest(value);}
     manifest=value;
+    if(!modeChosen)mode=manifest.cohorts?'core500':'fixed';
     const age=manifest.heartbeat ? Date.now()-new Date(manifest.heartbeat).getTime():Infinity;
     $('health').textContent=age<180000?'Worker reporting':age<7200000?'Report updated '+Math.round(age/60000)+'m ago':'Worker report stale';$('health').className='health '+(age<180000?'alive':age>=7200000?'stale':'');
     $('reference-count').textContent=fmt(manifest.reference_count);$('catalog-count').textContent=fmt(manifest.catalog_count);
@@ -243,9 +271,11 @@ async function loadDetails(run){
     const value=await reportJSON(run.files?.details,'data/'+id+'.json',version,detailsController.signal);
     if(current!==request||selected!==id)return;
     if(value.run?.id!==id||value.run.sha!==run.sha||!Array.isArray(value.rows))throw Error('The server returned details for a different snapshot.');
-    if(['fixed','growing'].some(scope=>value.run[scope]?.finished!==run[scope].finished||value.run[scope]?.total!==run[scope].total)
+    if(['fixed','growing',...cohortScopes.filter(scope=>run[scope])].some(scope=>value.run[scope]?.finished!==run[scope].finished||value.run[scope]?.total!==run[scope].total
+          ||(run[scope].membership_sha256&&value.run[scope]?.membership_sha256!==run[scope].membership_sha256))
        ||value.run.status!==run.status
-       ||(run.files?.details&&(value.rows.length!==run.growing.finished||value.rows.filter(row=>row.fixed).length!==run.fixed.finished)))
+       ||(run.files?.details&&(value.rows.length!==run.growing.finished||value.rows.filter(row=>row.fixed).length!==run.fixed.finished
+          ||cohortScopes.some(scope=>run[scope]&&value.rows.filter(row=>inScope(row,scope)).length!==run[scope].finished))))
       throw Error('Recording details do not match the selected report version. Keeping the previous verified results.');
     detailsCache.delete(id);detailsCache.set(id,{version,value});
     while(detailsCache.size>3)detailsCache.delete(detailsCache.keys().next().value);
@@ -260,49 +290,69 @@ function selectSnapshot(id){
   followLatest=false;selected=id;page=0;return loadDetails(run);
 }
 function render(){
-  if(!data)return;const r=data.run,s=r[mode];
-  $('fixed').classList.toggle('active',mode==='fixed');$('growing').classList.toggle('active',mode==='growing');
-  $('fixed').setAttribute('aria-pressed',mode==='fixed');$('growing').setAttribute('aria-pressed',mode==='growing');
-  $('scope-note').textContent=mode==='fixed'?'The frozen 5,604-match cohort. Its membership stays constant across full runs.':'All eligible matches frozen at the start of this run. New discoveries enter the next run.';
+  if(!data)return;const r=data.run;if(!r[mode])mode='fixed';const s=r[mode];
+  for(const scope of corpusScopes){$(scope).classList.toggle('active',mode===scope);$(scope).setAttribute('aria-pressed',mode===scope);if(cohortScopes.includes(scope)){$(scope).hidden=!r[scope];if(r[scope])$(scope+'-count').textContent=fmt(r[scope].total);}}
+  $('reference-count').textContent=fmt(r.fixed.total);$('catalog-count').textContent=fmt(r.growing.total);
+  const scopeText={core500:'The frozen core of 500 recordings, selected for engine-feature and failure coverage.',extension500:'The frozen 500 additional recordings, disjoint from the core.',combined1000:'The frozen 1,000-recording baseline: core 500 plus 500 additional recordings.'};
+  $('scope-note').textContent=scopeText[mode]|| (mode==='fixed'?'Members of the original 5,604-recording reference scheduled in this snapshot. The legacy membership stays unchanged.':r.workflow&&r.growing.total===1000?'The 1,000 scheduled baseline recordings.':'All recordings scheduled in this run.');
+  if(cohortScopes.includes(mode))$('scope-note').textContent+=' IDs and recording hashes stay fixed. This failure-focused set does not estimate whole-corpus success rates.';
+  if(s.not_scheduled)$('scope-note').textContent+=' '+fmt(s.not_scheduled)+' members were not scheduled in this historical snapshot.';
   if(r.pilot)$('scope-note').textContent+=' This is a limited pilot; it does not cover the full cohort.';
-  $('run-state').textContent='● '+(r.status==='running'?'Measuring recordings':r.status==='complete'?'Run complete':runStatus(r));
+  const retry=r.status==='running'&&r.execution?.phase==='retrying'?r.execution:null;
+  $('run-state').textContent='● '+(retry?'Timeout retries '+fmt(retry.retry_finished)+' / '+fmt(retry.retry_total)+' · '+fmt(retry.active_sessions)+' active':r.status==='running'&&r.execution?.phase==='finalizing'?'Finalizing results':r.status==='running'?'Measuring recordings':r.status==='complete'?'Run complete':runStatus(r));
+  renderSchedule(r);
   $('run-state').setAttribute('data-state',r.status);
   const commit=el('a',r.sha.slice(0,12));commit.href='https://github.com/librematch/genie/commit/'+r.sha;commit.target='_blank';commit.rel='noopener';$('commit').replaceChildren(commit);
   $('run-time').textContent=(r.imported?'Imported historical scan · ':'')+r.architecture+' · '+date(r.finished||r.created);
   if(r.build_profile)$('run-time').textContent+=' · '+r.build_profile;
-  if(r.case_workers)$('run-time').textContent+=' · up to '+fmt(r.case_workers)+' processes';
+  if(r.case_workers)$('run-time').textContent+=' · up to '+fmt(retry?(retry.maximum_sessions||Math.min(r.case_workers,10)):r.case_workers)+' processes';
   if(r.continuation)$('run-time').textContent+=' · '+fmt(r.continuation.preserved_results)+' results retained from prior worker';
   $('run-progress').style.width=(100*s.finished/Math.max(1,s.total))+'%';
   $('measured').textContent=fmt(s.finished);$('measured-sub').textContent='of '+fmt(s.total)+' in this snapshot';
+  if(retry)$('measured-sub').textContent+=' · initial results; timeout retries still running';
   $('checked').textContent=fmt(s.counts.complete_checked||0);
   $('checked-sub').textContent=fmt(s.counts.complete_unchecked||0)+' end reached without usable checkpoints';
   $('median').textContent=s.median_percent===null?'—':s.median_percent.toFixed(s.median_percent<1?3:1)+'%';
   $('median-sub').textContent=fmt(s.median_ticks)+' updates · '+fmt(s.measurable)+' measurable cases';
   renderTiming(r,s);
-  const c=r.comparison;$('advanced').textContent=c.comparable?'+'+fmt(c.improved):'Baseline';
-  $('advanced-sub').textContent=c.comparable?fmt(c.regressed)+' earlier stops · '+fmt(c.comparable)+' comparable matches':'Reference for subsequent snapshots';
-  const waiting=r.status==='build_failed'?'Not run':'Not measured yet';
-  $('outcome-note').textContent=fmt(s.total-s.finished)+(r.status==='build_failed'?' not run':' pending');
+  renderChangeMetric(r);
+  const waiting=r.status==='build_failed'?'Not run':r.status==='aborted'?'Not measured · run aborted':'Not measured yet';
+  $('outcome-note').textContent=fmt(s.total-s.finished)+(r.status==='build_failed'?' not run':r.status==='aborted'?' unmeasured':' pending');
+  if(retry)$('outcome-note').textContent=fmt(retry.retry_total-retry.retry_finished)+' timeout retries remaining across the run · up to '+fmt(retry.retry_seconds)+'s each'+(retry.retry_tick_seconds?' · '+fmt(retry.retry_tick_seconds)+'s per update':'');
   $('outcome-bar').replaceChildren();$('outcome-legend').replaceChildren();
   const counts={...s.counts};if(s.total>s.finished)counts.pending=s.total-s.finished;
   for(const key of orderedOutcomes(Object.keys(counts))){const count=counts[key],labelText=key==='pending'?waiting:names[key]||key;const bar=el('div');bar.style.width=100*count/Math.max(1,s.total)+'%';bar.style.background=color(key);bar.title=labelText+': '+fmt(count);$('outcome-bar').append(bar);const label=el('span');const swatch=el('i');swatch.style.background=color(key);label.append(swatch,document.createTextNode(labelText),el('b',fmt(count)),el('small',(100*count/Math.max(1,s.total)).toFixed(count&&count<s.total/1000?2:1)+'%'));$('outcome-legend').append(label);}
   renderCharts(s);
   $('blockers').replaceChildren();for(const b of s.blockers.slice(0,7)){const item=el('div'),line=el('div',undefined,'blocker-label'),label=el('span',b.reason);label.title=b.reason;line.append(label,el('strong',fmt(b.count)));const track=el('div',undefined,'blocker-track'),fill=el('div');fill.style.width=100*b.count/Math.max(1,s.blockers[0].count)+'%';track.append(fill);item.append(line,track);$('blockers').append(item);}
   if(!s.blockers.length)$('blockers').append(el('p','No unsupported-condition results reported in this snapshot.','chart-note'));
-  const error=detailsError||r.failure?.message||r.error;$('error').hidden=!error;$('error').textContent=error||'';
+    const error=detailsError||r.failure?.message||r.error;$('error').hidden=!error;$('error').textContent=error||'';
   $('failure-diagnostics').hidden=!r.failure;
   $('failure-diagnostic-text').textContent=r.failure?'Stage: '+r.failure.stage+'\nCode: '+r.failure.code+'\n\n'+(r.failure.details||r.failure.message):'';
   const untested=r.status==='build_failed'&&s.finished===0;
   $('table-state').hidden=!detailsLoading&&!detailsError&&!untested;
   $('table-state').textContent=detailsError?'Recording details unavailable.':untested?'No replay tests were started. This snapshot has no simulation results.':detailsReady?'Updating recording details…':'Loading recording details for '+runName(r)+'…';
   $('retry-details').hidden=!detailsError;
-  for(const id of ['search','status-filter','sort'])$(id).disabled=!detailsReady;
+  for(const id of ['search','status-filter','engine-kind-filter','sort'])$(id).disabled=!detailsReady;
   $('identity').textContent=JSON.stringify({run_id:r.id,...(data.identity||{}),details_loaded:detailsReady,comparison_note:'Progress changes compare the same recording hashes in the fixed cohort; historical and current instrumentation are identified separately.'},null,2);
   const prior=$('prior-worker');prior.hidden=!r.continuation;
   if(r.continuation){prior.href='data/'+encodeURIComponent(r.continuation.run_id)+'.json';prior.textContent='Download the pre-upgrade worker snapshot ('+fmt(r.continuation.preserved_results)+' retained results)';}
   $('download').href=reportURL(r.files?.details,'data/'+r.id+'.json',detailsVersion(r));
   const filter=$('status-filter'),keep=filter.value;filter.replaceChildren(new Option('All outcomes','all'));for(const key of Object.keys(s.counts))filter.add(new Option(names[key]||key,key));filter.value=Object.hasOwn(s.counts,keep)?keep:'all';
   renderCheckpointGroups();renderCommandCoverage();renderReplayChanges();renderTable();
+}
+function renderChangeMetric(run){
+  const stats=replayChanges?.run.id===run.id?replayChanges[mode]:null;
+  const c=cohortScopes.includes(mode)?{comparable:stats?.compared_recordings||0,improved:stats?.advanced||0,regressed:stats?.regressed||0}:run.comparison;
+  $('advanced').textContent=c?.comparable?'+'+fmt(c.improved):'Baseline';
+  $('advanced-sub').textContent=c?.comparable?fmt(c.regressed)+' regressions · '+fmt(c.comparable)+' comparable matches':'Reference for subsequent snapshots';
+}
+function renderSchedule(run){
+  const note=$('scheduling-note');
+  const stages=(run.scheduling?.stages||[]).filter(s=>s.total&&['core500','extension500'].includes(s.id));
+  note.hidden=!stages.length;
+  const phaseNames={core500:'Core',extension500:'Additional'};
+  let text=stages.map(s=>(phaseNames[s.id]||s.label)+': '+fmt(s.finished)+' / '+fmt(s.total)).join(' · ');
+  note.textContent=text;
 }
 function renderTiming(run,scope){
   const timing=scope.timing,measured=timing?.measured;
@@ -332,17 +382,20 @@ async function loadReplayChanges(run){
   changesError='';
   if(replayChanges?.run.id!==run.id){replayChanges=undefined;changesPage=0;}
   const cached=changesCache.get(run.id);
-  if(cached?.version===version){replayChanges=cached.value;changesLoading=false;changesPendingKey='';renderReplayChanges();return;}
+  const persisted=storedChanges(run);
+  const exact=[cached,persisted].find(entry=>entry?.version===version);
+  if(exact){replayChanges=exact.value;changesLoading=false;changesPendingKey='';renderReplayChanges();return;}
+  // A new manifest version can arrive before its comparison report is available
+  // at the edge. Keep the last verified report for this run visible while retrying.
+  if(!replayChanges)replayChanges=cached?.value||persisted?.value;
   changesLoading=true;changesPendingKey=key;renderReplayChanges();
   try{
     const value=await reportJSON(run.files?.changes,'changes/'+run.id+'.json',version,changesController.signal);
     if(current!==changesRequest||selected!==run.id)return;
-    if(value.schema!==1||value.run?.id!==run.id||value.run.sha!==run.sha||!Array.isArray(value.rows)
-      ||(value.available&&(value.fixed?.total_recordings!==run.fixed.total||value.growing?.total_recordings!==run.growing.total))
-      ||(run.changes&&value.baseline?.id!==(run.changes.baseline_id||undefined)))throw Error('Replay comparison belongs to a different benchmark snapshot.');
+    if(!validReplayChanges(value,run))throw Error('Replay comparison belongs to a different benchmark snapshot.');
     changesCache.delete(run.id);changesCache.set(run.id,{version,value});
     while(changesCache.size>3)changesCache.delete(changesCache.keys().next().value);
-    replayChanges=value;
+    replayChanges=value;rememberChanges(run,version,value);
   }catch(error){if(current===changesRequest&&error.name!=='AbortError')changesError=error.message;}
   finally{if(current===changesRequest){changesLoading=false;changesPendingKey='';renderReplayChanges();}}
 }
@@ -356,12 +409,13 @@ function changeStop(stop){
   cell.append(detail);return cell;
 }
 function renderReplayChanges(){
+  if(data)renderChangeMetric(data.run);
   const value=replayChanges?.run.id===selected?replayChanges:undefined,s=value?.[mode];
   $('changes-content').hidden=!value?.available;
   $('changes-download').hidden=!value?.available;
   const state=$('changes-state');
   if(!value){state.textContent=changesError||'Loading changes against the previous completed engine snapshot…';return;}
-  if(!value.available){state.textContent=value.reason;return;}
+  if(!value.available){state.textContent=value.reason+(changesLoading?' · updating…':'')+(changesError?' · '+changesError:'');return;}
   const link=el('a',value.baseline.sha.slice(0,12));link.href='https://github.com/librematch/genie/commit/'+value.baseline.sha;link.target='_blank';link.rel='noopener';
   state.replaceChildren(document.createTextNode('Compared with '),link,document.createTextNode(' · completed '+date(value.baseline.finished||value.baseline.created)+(changesLoading?' · updating…':'')+(changesError?' · '+changesError:'')));
   for(const [id,count] of [['changes-total',s.changed_recordings],['changes-advanced',s.advanced],['changes-regressed',s.regressed],['changes-other',s.mixed+s.changed+s.measurement]])$(id).textContent=fmt(count);
@@ -369,9 +423,9 @@ function renderReplayChanges(){
   $('changes-warnings').textContent=value.warnings.join(' ');$('changes-warnings').hidden=!value.warnings.length;
   $('changes-download').href='changes/'+encodeURIComponent(value.run.id)+'.json';
   const term=$('changes-search').value.toLowerCase(),filter=$('changes-filter').value||'all',sort=$('changes-sort').value||'ticks-absolute';
-  let rows=value.rows.filter(r=>(mode==='growing'||r.fixed)&&(filter==='all'||r.kind===filter||(filter==='stops'&&r.stop_changed)||(filter==='new-eof'&&r.new_eof)||(filter==='lost-eof'&&r.lost_eof)));
+  let rows=value.rows.filter(r=>inScope(r)&&(filter==='all'||r.kind===filter||(filter==='stops'&&r.stop_changed)||(filter==='new-eof'&&r.new_eof)||(filter==='lost-eof'&&r.lost_eof)));
   if(term)rows=rows.filter(r=>JSON.stringify([r.match_id,r.before.match_id,r.before.stop,r.after.stop]).toLowerCase().includes(term));
-  const metric=r=>sort==='ticks-gain'?(r.ticks_delta??-Infinity):sort==='ticks-loss'?-(r.ticks_delta??Infinity):sort==='checkpoints-gain'?(r.checkpoints_delta??-Infinity):sort==='checkpoints-loss'?-(r.checkpoints_delta??Infinity):Math.abs(r.ticks_delta||0);
+  const metric=r=>sort==='ticks-now'?(r.after.completed_ticks??-Infinity):sort==='ticks-gain'?(r.ticks_delta??-Infinity):sort==='ticks-loss'?-(r.ticks_delta??Infinity):sort==='checkpoints-gain'?(r.checkpoints_delta??-Infinity):sort==='checkpoints-loss'?-(r.checkpoints_delta??Infinity):Math.abs(r.ticks_delta||0);
   rows.sort((a,b)=>(sort==='id'?0:metric(b)-metric(a))||a.match_id.localeCompare(b.match_id));
   const pages=Math.max(1,Math.ceil(rows.length/25));changesPage=Math.max(0,Math.min(changesPage,pages-1));
   const labels={advanced:'Advanced',regressed:'Regressed',mixed:'Mixed',changed:'Other change',measurement:'Length metadata changed'};
@@ -420,22 +474,25 @@ function renderCommandCoverage(){
   const state=$('command-coverage-state');
   if(!ready){state.textContent=commandCoverageError||(commandCoverageState==='missing'?'Command census queued or not available for this snapshot.':'Loading the full-recording command census…');return;}
   state.textContent=fmt(s.scanned_recordings)+' / '+fmt(s.total_recordings)+' recordings scanned'+(s.pending_recordings?' · '+fmt(s.pending_recordings)+' pending':'')+(s.unreadable_recordings?' · '+fmt(s.unreadable_recordings)+' unreadable bodies excluded':'');
+  if(s.not_scheduled_recordings)state.textContent+=' · '+fmt(s.not_scheduled_recordings)+' members not scheduled';
   if(commandCoverageState!=='ready')state.textContent+=' · keeping the last verified census'+(commandCoverageError?': '+commandCoverageError:' while the update is unavailable');
   const reviewed=commandStandard==='reviewed',types=s.type_counts.implemented+(reviewed?0:s.type_counts.partial),occurrences=s.occurrence_counts.implemented+(reviewed?0:s.occurrence_counts.partial);
+  const assessed=value.classification.available;
   const percent=n=>n===null||n===undefined?'—':n.toFixed(n<1?2:1)+'%';
   $('command-types-label').textContent=reviewed?'VARIANTS WITH REVIEWED HANDLERS':'VARIANTS WITH A HANDLER';
   $('command-occurrences-label').textContent=reviewed?'OCCURRENCES OF REVIEWED VARIANTS':'OCCURRENCES WITH A HANDLER';
-  $('command-types-percent').textContent=percent(reviewed?s.implemented_types_percent:s.handler_types_percent);
-  $('command-occurrences-percent').textContent=percent(reviewed?s.implemented_occurrences_percent:s.handler_occurrences_percent);
-  $('command-types-count').textContent=fmt(types)+' of '+fmt(s.observed_types)+' observed command variants';
-  $('command-occurrences-count').textContent=fmt(occurrences)+' of '+fmt(s.command_occurrences)+' commands across complete recording bodies';
+  $('command-types-percent').textContent=assessed?percent(reviewed?s.implemented_types_percent:s.handler_types_percent):'—';
+  $('command-occurrences-percent').textContent=assessed?percent(reviewed?s.implemented_occurrences_percent:s.handler_occurrences_percent):'—';
+  $('command-types-count').textContent=assessed?fmt(types)+' of '+fmt(s.observed_types)+' observed command variants':'Assessment unavailable · '+fmt(s.observed_types)+' observed variants';
+  $('command-occurrences-count').textContent=assessed?fmt(occurrences)+' of '+fmt(s.command_occurrences)+' commands across complete recording bodies':fmt(s.command_occurrences)+' commands counted; implementation assessment unavailable';
   const label={implemented:'Reviewed handler',partial:'Partial / conditional',unsupported:'Unsupported',unknown:'Unknown'};
   $('command-breakdown').replaceChildren();
   for(const key of ['implemented','partial','unsupported','unknown']){
     const item=el('span',label[key]+': '+fmt(s.type_counts[key])+' variants · '+fmt(s.occurrence_counts[key])+' commands','command-state '+key);$('command-breakdown').append(item);
   }
   $('command-definition').textContent=reviewed?'Conservative implementation coverage: partial and conditional handlers are excluded. A reviewed handler does not certify later autonomous behaviour or checkpoint correctness.':'Handler presence includes partial and conditional implementations. This is a measure of implemented entry points; execution can still fail.';
-  $('command-census-note').textContent='Counts include the entire recording, including commands beyond the simulation stop. Unknown packets stay in the denominator; unreadable bodies are excluded. Camera, chat and internal unit/AI updates are excluded. '+(!value.classification.available?'Engine capability source is unavailable, so implementation status is unknown. ':'')+'Recorded game build 158041 · parser '+value.parser.key.slice(0,12)+' · updated '+date(value.generated)+'.';
+  const benchmark=manifest.runs.find(r=>r.id===value.run.id),build=value.benchmark?.game_build||158041;
+  $('command-census-note').textContent='Counts include the entire recording, including commands beyond the simulation stop. Unknown packets stay in the denominator; unreadable bodies are excluded. Camera, chat and internal unit/AI updates are excluded. '+(!assessed?'Engine capability source is unavailable, so implementation status is unknown. ':'Automatically assessed from this exact engine source. ')+'Game build '+build+' · engine '+value.run.sha.slice(0,12)+(benchmark?.build_profile?' · '+benchmark.build_profile:'')+' · benchmark '+(benchmark?.status==='complete'?'completed '+date(benchmark.finished):benchmark?.status||'status unavailable')+' · parser '+value.parser.key.slice(0,12)+' · assessment updated '+date(value.generated)+'.';
   const link=$('command-download');link.href='coverage/'+encodeURIComponent(value.run.id)+'.json';link.download='';
   const filter=$('command-filter').value||'gaps';
   const rows=s.rows.filter(r=>filter==='all'||filter==='gaps'&&r.status!=='implemented'||r.status===filter);
@@ -515,8 +572,9 @@ function chart(id,buckets){
 }
 function renderTable(){
   if(!detailsReady){$('rows').replaceChildren();$('row-count').textContent=detailsError?'Recording details unavailable':'Loading recording details…';$('page-number').textContent='—';$('previous').disabled=true;$('next').disabled=true;return;}
-  if(!data)return;let rows=data.rows.filter(r=>mode==='growing'||r.fixed);const term=$('search').value.toLowerCase(),filter=$('status-filter').value;
-  rows=rows.filter(r=>(filter==='all'||outcome(r)===filter)&&(!term||r.match_id.toLowerCase().includes(term)||JSON.stringify([r.unsupported,r.reason,r.differences,r.status==='checkpoint_mismatch'?checkpointReason(r):'']).toLowerCase().includes(term)));
+  if(!data)return;let rows=data.rows.filter(r=>inScope(r));const term=$('search').value.toLowerCase(),filter=$('status-filter').value;
+  const kind=$('engine-kind-filter').value||'all';
+  rows=rows.filter(r=>(filter==='all'||outcome(r)===filter)&&(kind==='all'||engineErrors(r).some(e=>e.engine_error.kind===kind))&&(!term||r.match_id.toLowerCase().includes(term)||JSON.stringify([r.unsupported,r.reason,r.engine_error,r.differences,r.status==='checkpoint_mismatch'?checkpointReason(r):'']).toLowerCase().includes(term)));
   const progress=r=>r.total_ticks?100*(r.completed_ticks||0)/r.total_ticks:-1;
   const ticks=r=>Number.isFinite(r.completed_ticks)&&r.completed_ticks>=0?r.completed_ticks:-1;
   const sort=$('sort').value;
@@ -525,6 +583,9 @@ function renderTable(){
     if(sort==='time-desc'||sort==='time-asc'){
       const left=elapsedSeconds(a.runtime_seconds),right=elapsedSeconds(b.runtime_seconds);
       order=left===null?(right===null?0:1):right===null?-1:(sort==='time-asc'?1:-1)*(left-right);
+    }else if(sort==='tps-asc'||sort==='tps-desc'){
+      const left=averageTPS(a),right=averageTPS(b);
+      order=left===null?(right===null?0:1):right===null?-1:(sort==='tps-asc'?1:-1)*(left-right);
     }else if(sort==='ticks-desc')order=ticks(b)-ticks(a);
     else if(sort!=='id'){
       order=(sort==='progress-asc'?1:-1)*(progress(a)-progress(b));
@@ -544,19 +605,50 @@ function renderTable(){
     runtime.title=elapsedSeconds(r.runtime_seconds)===null?'No recorded timer.':'Wall time including parsing and simulation until the first stop or EOF. Shared session startup is excluded; historical and fallback processes may include startup.';
     if(elapsedSeconds(r.runtime_seconds)!==null&&(r.runtime_source==='retained'||r.runtime_source==='historical'))
       runtime.append(el('small',r.runtime_source==='retained'?'Retained':'Historical'));
+    const tps=averageTPS(r),speed=el('td',tps===null?'—':tps.toLocaleString('en-US',{maximumSignificantDigits:4}),'recording-speed');
+    speed.title=tps===null?'Average speed unavailable: requires a completed-tick counter and positive recorded wall time.':'Completed simulation ticks divided by recorded wall time in seconds. Includes parsing and any startup counted by that timer.';
     const diagnostic=el('td');
     if(r.status==='checkpoint_mismatch')diagnostic.append(checkpointDetails(r));
     else{
       let reason=r.unsupported?.map(v=>v.reason).join('; ')||r.reason||'';
       if(r.status==='complete')reason=r.checkpoints_passed?'All usable recorded checkpoints matched.':'No usable recorded checkpoints.';
       if(r.ignored_commands_to_stop)reason+=' '+fmt(r.ignored_commands_to_stop)+' ignored command packets.';
-      diagnostic.textContent=reason;
+      if(engineErrors(r).length)diagnostic.append(engineErrorDetails(r,reason,data.run.sha));
+      else {
+        diagnostic.textContent=reason;
+        if(r.status==='timeout'&&r.timeout_kind==='simulation_step')
+          diagnostic.append(el('p','Update '+fmt(r.step_tick)+' exceeded '+fmt(r.step_limit_seconds)+'s. '+fmt(r.completed_ticks)+' completed updates retained.','change-reason'));
+      }
     }
-    tr.append(first,status,ticks,percent,checkpoint,runtime,diagnostic);$('rows').append(tr);
+    tr.append(first,status,ticks,percent,checkpoint,runtime,speed,diagnostic);$('rows').append(tr);
   }
   $('row-count').textContent=fmt(rows.length)+' matching recordings';$('page-number').textContent=(page+1)+' / '+pages;$('previous').disabled=page===0;$('next').disabled=page===pages-1;
 }
-for(const key of ['fixed','growing'])$(key).onclick=()=>{mode=key;page=0;changesPage=0;render();};
+const engineKindNames={unsupported:'Unsupported mechanic',unreachable:'Engine invariant',missing_data:'Missing data',invalid_input:'Invalid input',io:'I/O failure'};
+function engineErrors(row){
+  const items=(row.unsupported||[]).flatMap(item=>[item,...(item.freezes||[])]);
+  if(row.engine_error)items.push(row);
+  return items.filter(item=>item.engine_error?.schema===2);
+}
+function engineErrorDetails(row,reason,sha){
+  const detail=el('details',undefined,'checkpoint-details');detail.append(el('summary',reason));
+  const seen=new Set();
+  for(const item of engineErrors(row)){
+    const error=item.engine_error,key=JSON.stringify([item.reason,error]);if(seen.has(key))continue;seen.add(key);
+    detail.append(el('p',(engineKindNames[error.kind]||error.kind)+' · '+error.phase+' · '+(item.reason||reason),'change-reason'));
+    const at=error.location,path=at?.repository_path;
+    const adapter=typeof path==='string'&&/\/genie-oracle\/src\/progress\.rs$/.test(path);
+    if(adapter)detail.append(el('p','Benchmark adapter at '+path+':'+at.line,'change-reason'));
+    if(!adapter&&typeof path==='string'&&/^crates\/[A-Za-z0-9_./-]+\.rs$/.test(path)&&!path.split('/').includes('..')&&Number.isInteger(at.line)&&at.line>0&&/^[0-9a-f]{40}$/.test(sha)){
+      const link=el('a',path+':'+at.line);link.href='https://github.com/librematch/genie/blob/'+sha+'/'+path+'#L'+at.line;link.target='_blank';link.rel='noopener';detail.append(link);
+    }
+    for(const entry of error.context||[])detail.append(el('p',entry.key+': '+entry.value,'change-reason'));
+    if(error.cause)detail.append(el('p','Cause: '+error.cause,'change-reason'));
+  }
+  return detail;
+}
+for(const key of corpusScopes)$(key).onclick=()=>{mode=key;modeChosen=true;page=0;changesPage=0;render();};
+$('engine-kind-filter').onchange=()=>{page=0;renderTable();};
 const showLoadError=error=>{$('error').hidden=false;$('error').textContent=error.message;};
 $('run-select').onchange=event=>{const pending=selectSnapshot(event.currentTarget.value);if(pending)pending.catch(showLoadError);};
 $('run-select').onblur=()=>{if(manifest)syncSelector(visibleRuns(manifest.runs),true);};
