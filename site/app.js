@@ -3,6 +3,12 @@ const $ = id => document.getElementById(id);
 const fmt = n => typeof n === 'number' ? n.toLocaleString('en-US',{maximumFractionDigits:1}) : '—';
 const elapsedSeconds = value => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
 const replayTime = value => elapsedSeconds(value) === null ? '—' : value.toLocaleString('en-US',{minimumFractionDigits:1,maximumFractionDigits:1})+'s';
+function averageTPS(row){
+  const seconds=elapsedSeconds(row.runtime_seconds),ticks=row.completed_ticks;
+  if(seconds===null||seconds===0||!Number.isFinite(ticks)||ticks<0)return null;
+  const speed=ticks/seconds;
+  return Number.isFinite(speed)?speed:null;
+}
 function runDuration(value){
   if(elapsedSeconds(value)===null)return '—';
   const tenths=Math.round(value*10),hours=Math.floor(tenths/36000),minutes=Math.floor(tenths%36000/600),seconds=(tenths%600/10).toFixed(1);
@@ -577,6 +583,9 @@ function renderTable(){
     if(sort==='time-desc'||sort==='time-asc'){
       const left=elapsedSeconds(a.runtime_seconds),right=elapsedSeconds(b.runtime_seconds);
       order=left===null?(right===null?0:1):right===null?-1:(sort==='time-asc'?1:-1)*(left-right);
+    }else if(sort==='tps-asc'||sort==='tps-desc'){
+      const left=averageTPS(a),right=averageTPS(b);
+      order=left===null?(right===null?0:1):right===null?-1:(sort==='tps-asc'?1:-1)*(left-right);
     }else if(sort==='ticks-desc')order=ticks(b)-ticks(a);
     else if(sort!=='id'){
       order=(sort==='progress-asc'?1:-1)*(progress(a)-progress(b));
@@ -596,6 +605,8 @@ function renderTable(){
     runtime.title=elapsedSeconds(r.runtime_seconds)===null?'No recorded timer.':'Wall time including parsing and simulation until the first stop or EOF. Shared session startup is excluded; historical and fallback processes may include startup.';
     if(elapsedSeconds(r.runtime_seconds)!==null&&(r.runtime_source==='retained'||r.runtime_source==='historical'))
       runtime.append(el('small',r.runtime_source==='retained'?'Retained':'Historical'));
+    const tps=averageTPS(r),speed=el('td',tps===null?'—':tps.toLocaleString('en-US',{maximumSignificantDigits:4}),'recording-speed');
+    speed.title=tps===null?'Average speed unavailable: requires a completed-tick counter and positive recorded wall time.':'Completed simulation ticks divided by recorded wall time in seconds. Includes parsing and any startup counted by that timer.';
     const diagnostic=el('td');
     if(r.status==='checkpoint_mismatch')diagnostic.append(checkpointDetails(r));
     else{
@@ -609,7 +620,7 @@ function renderTable(){
           diagnostic.append(el('p','Update '+fmt(r.step_tick)+' exceeded '+fmt(r.step_limit_seconds)+'s. '+fmt(r.completed_ticks)+' completed updates retained.','change-reason'));
       }
     }
-    tr.append(first,status,ticks,percent,checkpoint,runtime,diagnostic);$('rows').append(tr);
+    tr.append(first,status,ticks,percent,checkpoint,runtime,speed,diagnostic);$('rows').append(tr);
   }
   $('row-count').textContent=fmt(rows.length)+' matching recordings';$('page-number').textContent=(page+1)+' / '+pages;$('previous').disabled=page===0;$('next').disabled=page===pages-1;
 }
