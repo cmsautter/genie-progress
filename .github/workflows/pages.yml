@@ -29,10 +29,22 @@ jobs:
           REPOSITORY: ${{ github.repository }}
         run: |
           python3 - <<'PY'
-          import json, os, pathlib, re, subprocess
+          import json, os, pathlib, re, subprocess, time
+          def github(args, capture=False):
+              for attempt in range(4):
+                  try:
+                      if capture:
+                          return subprocess.check_output(['gh', *args], text=True, timeout=60)
+                      return subprocess.run(['gh', *args], check=True, timeout=60)
+                  except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+                      if attempt == 3:
+                          raise
+                      delay = 2 ** (attempt + 1)
+                      print(f'GitHub report request failed; retrying in {delay}s ({attempt + 2}/4).', flush=True)
+                      time.sleep(delay)
           name = os.environ['REPORT_ASSET']
           assert re.fullmatch(r'report-[0-9a-f]{20}\.tar\.gz', name)
-          release = json.loads(subprocess.check_output(['gh', 'api', 'repos/' + os.environ['REPOSITORY'] + '/releases/tags/reports'], text=True))
+          release = json.loads(github(['api', 'repos/' + os.environ['REPOSITORY'] + '/releases/tags/reports'], capture=True))
           assets = [asset for asset in release['assets'] if asset.get('state') == 'uploaded'
                     and re.fullmatch(r'report-[0-9a-f]{20}\.tar\.gz', asset['name'])]
           assert any(asset['name'] == name for asset in assets), 'Selected report is not a completed upload'
@@ -41,7 +53,7 @@ jobs:
           with pathlib.Path(os.environ['GITHUB_OUTPUT']).open('a') as output:
               output.write('current=' + str(current).lower() + '\n')
           if current:
-              subprocess.run(['gh', 'release', 'download', 'reports', '--repo', os.environ['REPOSITORY'], '--pattern', name, '--dir', '/tmp/report'], check=True)
+              github(['release', 'download', 'reports', '--repo', os.environ['REPOSITORY'], '--pattern', name, '--dir', '/tmp/report', '--clobber'])
           else:
               print('Skipping an older report: a newer completed publication already exists.')
           PY
@@ -93,17 +105,23 @@ jobs:
                   assert value['run']['id'] == run['id'] and value['run']['sha'] == run['sha']
                   if kind == 'details':
                       assert value['run']['status'] == run['status']
-                      for scope in ('fixed', 'growing'):
+                      for scope in ('fixed', 'growing', *[s for s in ('core500', 'extension500', 'combined1000') if s in run]):
                           assert value['run'][scope]['total'] == run[scope]['total']
                           assert value['run'][scope]['finished'] == run[scope]['finished']
                       assert len(value['rows']) == run['growing']['finished']
                       assert sum(bool(row['fixed']) for row in value['rows']) == run['fixed']['finished']
+                      for scope in ('core500', 'extension500', 'combined1000'):
+                          if scope in run:
+                              assert sum(scope in row.get('cohorts', []) for row in value['rows']) == run[scope]['finished']
+                              assert value['run'][scope]['membership_sha256'] == run[scope]['membership_sha256']
           checkpoint_definitions = json.loads(pathlib.Path('site/checkpoint-checks.json').read_text())
           checkpoint_checks = {check['word']: check for check in checkpoint_definitions['checks']}
           runs = sorted(
               (run for run in manifest['runs'] if not run.get('pilot') and run['status'] != 'continued'),
               key=lambda run: datetime.datetime.fromisoformat(run['created']), reverse=True,
           )
+          import runpy
+          engine_diagnostics = runpy.run_path('site/engine_diagnostics.py')
           def stopping_reasons(rows, total):
               outcomes = Counter(row['status'] for row in rows)
               groups = defaultdict(set)
@@ -127,22 +145,21 @@ jobs:
                   if status == 'complete':
                       continue
                   reasons = set()
-                  for condition in row.get('unsupported', []):
-                      for item in [condition, *condition.get('freezes', [])]:
-                          if item.get('reason'):
-                              reasons.add(str(item['reason']))
+                  for item in engine_diagnostics['conditions'](row):
+                      if item.get('reason'):
+                          reasons.add((item.get('engine_error', {}).get('kind'), str(item['reason'])))
                   if status == 'checkpoint_mismatch':
                       for difference in row.get('differences', []):
                           word = difference.get('word')
                           check = checkpoint_checks.get(word) if row.get('build') == checkpoint_definitions['build'] else None
                           label = check['label'] if check else f'Checkpoint word {word}'
                           reason = 'Checkpoint mismatch: ' + label
-                          reasons.add(reason)
+                          reasons.add((None, reason))
                           checkpoint_words[(status, reason)] = word
                   if not reasons:
-                      reasons.add(str(row.get('reason') or row.get('error') or labels.get(status, status)))
-                  for reason in reasons:
-                      groups[(status, reason)].add(row['match_id'])
+                      reasons.add((None, str(row.get('reason') or row.get('error') or labels.get(status, status))))
+                  for kind, reason in reasons:
+                      groups[(status, kind, reason)].add(row['match_id'])
               stopped = len(rows) - outcomes['complete']
               return {
                   'total_recordings': total,
@@ -150,13 +167,15 @@ jobs:
                   'pending_recordings': max(0, total - len(rows)),
                   'stopped_recordings': stopped,
                   'outcomes': dict(sorted(outcomes.items())),
+                  'engine_errors': engine_diagnostics['summary'](rows),
                   'reasons': [
                       {'status': status, 'reason': reason, 'count': len(ids),
+                       **({'engine_kind': kind} if kind else {}),
                        'percent_of_stopped': round(100 * len(ids) / stopped, 2),
                        'examples': sorted(ids)[:5],
                        **({'checkpoint_word': checkpoint_words[(status, reason)]}
                           if (status, reason) in checkpoint_words else {})}
-                      for (status, reason), ids in sorted(groups.items(), key=lambda item: (-len(item[1]), *item[0]))
+                      for (status, kind, reason), ids in sorted(groups.items(), key=lambda item: (-len(item[1]), item[0][0], item[0][1] or '', item[0][2]))
                   ],
               }
           for name, candidates in (
@@ -183,6 +202,9 @@ jobs:
                   if changes.get('available'):
                       assert changes['fixed']['total_recordings'] == run['fixed']['total']
                       assert changes['growing']['total_recordings'] == run['growing']['total']
+                      for scope in ('core500', 'extension500', 'combined1000'):
+                          if scope in run:
+                              assert changes[scope]['total_recordings'] == run[scope]['total']
                   changes_alias = pathlib.Path('dist') / (name.removesuffix('.json') + '-changes.json')
                   shutil.copyfile(changes_source, changes_alias)
                   shutil.copyfile(changes_alias, changes_alias.with_suffix(''))
@@ -193,6 +215,9 @@ jobs:
                   assert coverage['run'] == {'id': run['id'], 'sha': run['sha']}
                   assert coverage['fixed']['total_recordings'] == run['fixed']['total']
                   assert coverage['growing']['total_recordings'] == run['growing']['total']
+                  for scope in ('core500', 'extension500', 'combined1000'):
+                      if scope in run:
+                          assert coverage[scope]['total_recordings'] == run[scope]['total']
                   coverage_alias = pathlib.Path('dist') / (name.removesuffix('.json') + '-command-coverage.json')
                   shutil.copyfile(coverage_source, coverage_alias)
                   shutil.copyfile(coverage_alias, coverage_alias.with_suffix(''))
@@ -205,17 +230,19 @@ jobs:
                   'checkpoint_definitions': 'checkpoint-checks.json',
                   'fixed': stopping_reasons([row for row in report['rows'] if row['fixed']], report['run']['fixed']['total']),
                   'growing': stopping_reasons(report['rows'], report['run']['growing']['total']),
+                  **{scope: stopping_reasons([row for row in report['rows'] if scope in row.get('cohorts', [])], report['run'][scope]['total'])
+                     for scope in ('core500', 'extension500', 'combined1000') if scope in report['run']},
               }
               summary_path = pathlib.Path('dist') / (name.removesuffix('.json') + '-stopping-simulation.json')
               summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + '\n')
               # Preserve the requested extensionless URL as an identical downloadable JSON file.
               shutil.copyfile(summary_path, summary_path.with_suffix(''))
               simulated_rows = [
-                  {key: row.get(key) for key in (
+                  {**{key: row.get(key) for key in (
                       'match_id', 'sha256', 'fixed', 'build', 'status',
                       'completed_ticks', 'total_ticks', 'checkpoints_passed', 'total_checkpoints',
                       'last_matching_checkpoint_tick', 'ignored_commands_to_stop',
-                  )}
+                  )}, **({'cohorts': row['cohorts']} if 'cohorts' in row else {})}
                   for row in report['rows'] if row['status'] == 'complete'
               ]
               simulated_rows.sort(key=lambda row: (-(row['checkpoints_passed'] or 0), row['match_id']))
@@ -230,6 +257,8 @@ jobs:
               simulated_path = pathlib.Path('dist') / (name.removesuffix('.json') + '-simulated.json')
               simulated_path.write_text(json.dumps(simulated, ensure_ascii=False, indent=2) + '\n')
               shutil.copyfile(simulated_path, simulated_path.with_suffix(''))
+          import runpy
+          runpy.run_path('site/engine_reports.py')['build']('dist')
           site_bytes = sum(path.stat().st_size for path in pathlib.Path('dist').rglob('*') if path.is_file())
           if site_bytes >= MAX_SITE_BYTES:
               raise ValueError(f'Generated website exceeds the 900 MiB site budget ({site_bytes} bytes)')
