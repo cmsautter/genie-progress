@@ -539,7 +539,7 @@ function renderCharts(summary){
   chart('percent-chart',summary.histogram);chart('ticks-chart',summary.ticks_histogram);
 }
 function chart(id,buckets){
-  const W=id==='ticks-chart'?1280:640,H=id==='ticks-chart'?235:280,L=44,R=12,T=16,B=65,plotH=H-T-B,plotW=W-L-R;
+  const W=Math.max(320,Math.round($(id).clientWidth)||640),H=id==='ticks-chart'?235:280,L=44,R=12,T=16,B=65,plotH=H-T-B,plotW=W-L-R;
   const ns='http://www.w3.org/2000/svg',svg=document.createElementNS(ns,'svg');svg.setAttribute('viewBox',`0 0 ${W} ${H}`);
   const series=chartOutcome==='all'?orderedOutcomes(buckets.flatMap(b=>Object.keys(b.counts))):[chartOutcome];
   const maximum=Math.max(0,...buckets.flatMap(b=>series.map(k=>b.counts[k]||0))),axis=countAxis(maximum,chartScale,plotH),baseline=T+plotH;
@@ -552,6 +552,8 @@ function chart(id,buckets){
   }
   const readout=$(id+'-readout');readout.textContent='Hover or focus a bucket to inspect its counts.';
   const step=plotW/Math.max(1,buckets.length),gutter=Math.min(5,step*.2),slot=(step-gutter)/Math.max(1,series.length),gap=Math.min(1,slot*.2);
+  const labelCount=Math.min(buckets.length,Math.max(2,Math.floor(plotW/50)));
+  const labeled=new Set(Array.from({length:labelCount},(_,i)=>Math.round(i*(buckets.length-1)/Math.max(1,labelCount-1))));
   buckets.forEach((bucket,i)=>{
     const total=series.reduce((sum,k)=>sum+(bucket.counts[k]||0),0);
     const description=bucket.label+' · '+series.map(k=>(names[k]||k)+': '+fmt(bucket.counts[k]||0)).join(' · ')+(series.length>1?' · Total: '+fmt(total):'');
@@ -565,7 +567,7 @@ function chart(id,buckets){
       if(series.length===1&&step>=26)node('text',{x:x+(slot-gap)/2,y:baseline-height-5,'text-anchor':'middle','font-size':8},fmt(count),group);
     }
     const inspect=()=>{readout.textContent=description;};group.addEventListener('pointerenter',inspect);group.addEventListener('focus',inspect);
-    if(buckets.length<35||i%Math.ceil(buckets.length/25)===0){const x=L+(i+.5)*step;node('text',{x,y:baseline+13,transform:`rotate(-52 ${x} ${baseline+13})`,'text-anchor':'end'},bucket.label);}
+    if(labeled.has(i)){const x=L+(i+.5)*step;node('text',{x,y:baseline+13,transform:`rotate(-52 ${x} ${baseline+13})`,'text-anchor':'end','class':'histogram-label'},bucket.label);}
   });
   if(!maximum)node('text',{x:L+plotW/2,y:T+plotH/2,'text-anchor':'middle'},'No recordings for this selection');
   $(id).replaceChildren(svg);
@@ -655,8 +657,9 @@ $('run-select').onblur=()=>{if(manifest)syncSelector(visibleRuns(manifest.runs),
 $('retry-details').onclick=()=>{detailsCache.delete(selected);loadDetails(manifest.runs.find(r=>r.id===selected)).catch(showLoadError);};
 for(const id of ['search','status-filter','sort'])$(id).addEventListener('input',()=>{page=0;renderTable();});
 $('previous').onclick=()=>{page--;renderTable();};$('next').onclick=()=>{page++;renderTable();};
-function showTheme(){const light=document.documentElement.dataset.theme==='light';$('theme-toggle').textContent=light?'Dark theme':'Light theme';$('theme-toggle').setAttribute('aria-pressed',String(light));}
+function showTheme(){const light=document.documentElement.dataset.theme==='light';$('theme-toggle').textContent=light?'Dark theme':'Light theme';}
 $('theme-toggle').onclick=()=>{const next=document.documentElement.dataset.theme==='light'?'dark':'light';document.documentElement.dataset.theme=next;try{localStorage.setItem('genie-theme',next);}catch{}showTheme();};showTheme();
+globalThis.addEventListener?.('resize',()=>{if(data)renderCharts(data.run[mode]);});
 $('provenance').onclick=()=>$('method').showModal();$('close-method').onclick=()=>$('method').close();
 $('chart-scale').onchange=event=>{chartScale=event.currentTarget.value;if(data)renderCharts(data.run[mode]);};
 $('chart-outcome').onchange=event=>{chartOutcome=event.currentTarget.value;if(data)renderCharts(data.run[mode]);};
