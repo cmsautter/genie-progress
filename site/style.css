@@ -31,3 +31,21 @@
 .refresh-note{color:var(--warn-text);line-height:1.6}.refresh-note[hidden]{display:none}
 :root .tabs{flex-wrap:wrap;gap:4px}:root .controls{gap:18px;align-items:flex-start}:root .tabs button[hidden]{display:none}.scheduling-note{line-height:1.7;padding:10px 13px;border-left:2px solid var(--teal);background:color-mix(in srgb,var(--panel) 50%,transparent)}.run-strip [data-state="aborted"]{color:var(--muted)}@media(max-width:650px){:root .tabs button{flex:1 1 auto}}
 .chart-grid>article{min-width:0}
+.engine-trend{margin-bottom:25px}
+.engine-trend[hidden]{display:none}
+.trend-grid{display:grid;grid-template-columns:1fr 1fr;gap:24px}
+.trend-grid figure{margin:0;min-width:0}
+.trend-grid figcaption{font-size:12px;color:var(--text-2);margin-bottom:6px}
+.trend-chart{height:auto}
+.trend-chart svg{height:auto;display:block}
+.trend-column{cursor:pointer;outline:none}
+.trend-column:hover .trend-hitbox,.trend-column:focus .trend-hitbox{fill:color-mix(in srgb,var(--link) 7%,transparent)}
+.trend-column:focus .trend-hitbox{stroke:var(--teal);stroke-width:.6}
+.trend-column.selected .trend-hitbox{fill:color-mix(in srgb,var(--link) 10%,transparent)}
+.chart .trend-value{fill:var(--text);font-weight:600}
+.trend-table{min-width:760px;margin-top:18px}
+.trend-table tr.selected td{background:color-mix(in srgb,var(--link) 8%,transparent)}
+.trend-table td{font-variant-numeric:tabular-nums}
+.trend-table small{display:block;font-size:11px;color:var(--muted);margin-top:4px}
+.trend-open{margin:0;text-align:left;color:var(--link);font:inherit;font-family:ui-monospace,monospace}
+@media(max-width:950px){.trend-grid{grid-template-columns:1fr}}
