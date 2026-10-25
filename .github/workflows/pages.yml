@@ -29,10 +29,22 @@ jobs:
           REPOSITORY: ${{ github.repository }}
         run: |
           python3 - <<'PY'
-          import json, os, pathlib, re, subprocess
+          import json, os, pathlib, re, subprocess, time
+          def github(args, capture=False):
+              for attempt in range(4):
+                  try:
+                      if capture:
+                          return subprocess.check_output(['gh', *args], text=True, timeout=60)
+                      return subprocess.run(['gh', *args], check=True, timeout=60)
+                  except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+                      if attempt == 3:
+                          raise
+                      delay = 2 ** (attempt + 1)
+                      print(f'GitHub report request failed; retrying in {delay}s ({attempt + 2}/4).', flush=True)
+                      time.sleep(delay)
           name = os.environ['REPORT_ASSET']
           assert re.fullmatch(r'report-[0-9a-f]{20}\.tar\.gz', name)
-          release = json.loads(subprocess.check_output(['gh', 'api', 'repos/' + os.environ['REPOSITORY'] + '/releases/tags/reports'], text=True))
+          release = json.loads(github(['api', 'repos/' + os.environ['REPOSITORY'] + '/releases/tags/reports'], capture=True))
           assets = [asset for asset in release['assets'] if asset.get('state') == 'uploaded'
                     and re.fullmatch(r'report-[0-9a-f]{20}\.tar\.gz', asset['name'])]
           assert any(asset['name'] == name for asset in assets), 'Selected report is not a completed upload'
@@ -41,7 +53,7 @@ jobs:
           with pathlib.Path(os.environ['GITHUB_OUTPUT']).open('a') as output:
               output.write('current=' + str(current).lower() + '\n')
           if current:
-              subprocess.run(['gh', 'release', 'download', 'reports', '--repo', os.environ['REPOSITORY'], '--pattern', name, '--dir', '/tmp/report'], check=True)
+              github(['release', 'download', 'reports', '--repo', os.environ['REPOSITORY'], '--pattern', name, '--dir', '/tmp/report', '--clobber'])
           else:
               print('Skipping an older report: a newer completed publication already exists.')
           PY
