@@ -178,7 +178,7 @@ function visibleRuns(runs){
   return [...runs].sort((a,b)=>Date.parse(b.created)-Date.parse(a.created)).filter(r=>{
     if(r.pilot||r.status==='continued')return false;
     const key=r.imported?'historical:'+r.id:r.sha+':'+(r.build_profile||'legacy');
-    if(seen.has(key))return false;
+    if(seen.has(key)&&!(r.id===selected&&r.status==='complete'))return false;
     seen.add(key);return true;
   });
 }
@@ -286,8 +286,8 @@ async function loadDetails(run){
   }
 }
 function selectSnapshot(id){
-  const run=visibleRuns(manifest.runs).find(r=>r.id===id);if(!run)return;
-  followLatest=false;selected=id;page=0;$('run-select').value=id;return loadDetails(run);
+  const run=manifest.runs.find(r=>r.id===id&&!r.pilot&&r.status!=='continued');if(!run)return;
+  followLatest=false;selected=id;page=0;syncSelector(visibleRuns(manifest.runs),true);return loadDetails(run);
 }
 function render(){
   if(!data)return;const r=data.run;if(!r[mode])mode='fixed';const s=r[mode];renderTrend();
@@ -543,28 +543,39 @@ function svgCanvas(W,H){
   const node=(tag,attrs,text,parent=svg)=>{const n=document.createElementNS(ns,tag);for(const [k,v]of Object.entries(attrs))n.setAttribute(k,v);if(text!==undefined)n.textContent=text;parent.append(n);return n;};
   return {svg,node};
 }
-// One completed full fixed-set run per engine commit, oldest first. The fixed cohort is frozen, so these summaries are comparable; growing-corpus membership is not.
+// One completed run per engine commit for the selected immutable cohort.
 function openSnapshot(id){const pending=selectSnapshot(id);if(pending)pending.catch(showLoadError);}
+const trendLabels={core500:'Core 500',extension500:'Additional 500',combined1000:'Combined 1,000'};
 function trendRuns(){
+  if(!cohortScopes.includes(mode))return [];
+  const membership=data?.run[mode]?.membership_sha256,total=mode==='combined1000'?1000:500;
+  if(!/^[a-f0-9]{64}$/.test(membership||''))return [];
   const best=new Map();
-  for(const r of visibleRuns(manifest.runs)){
-    if(r.status!=='complete'||r.fixed.finished!==r.fixed.total)continue;
-    const key=r.imported?'historical:'+r.id:r.sha,prior=best.get(key);
+  for(const r of [...manifest.runs].sort((a,b)=>Date.parse(b.created)-Date.parse(a.created))){
+    const scope=r[mode];
+    if(r.pilot||r.status!=='complete'||!scope||scope.total!==total||scope.finished!==total||scope.membership_sha256!==membership)continue;
+    const key=r.sha,prior=best.get(key);
     if(!prior||(prior.build_profile!=='release'&&r.build_profile==='release'))best.set(key,r);
   }
   return [...best.values()].sort((a,b)=>Date.parse(a.created)-Date.parse(b.created));
 }
+function trendComparison(r){
+  const c=r.changes,s=c?.summary?.[mode],scope=r[mode];
+  if(!c?.available||!c.baseline_sha||!s||s.total_recordings!==scope.total||s.membership_sha256!==scope.membership_sha256
+      ||!Number.isFinite(s.compared_recordings)||s.compared_recordings<=0||!Number.isFinite(s.advanced)||!Number.isFinite(s.regressed))return null;
+  return {...s,previous_sha:c.baseline_sha,warnings:c.warnings||[]};
+}
 function trendDescription(r){
-  const f=r.fixed,c=r.comparison;
-  return runName(r)+' · '+date(r.created)+' · median '+fmt(f.median_ticks)+' ticks · '+orderedOutcomes(Object.keys(f.counts)).map(k=>(names[k]||k)+': '+fmt(f.counts[k])).join(' · ')+(c?.comparable?' · advanced '+fmt(c.improved)+', regressed '+fmt(c.regressed)+' vs '+c.previous_sha.slice(0,8):'');
+  const f=r[mode],c=trendComparison(r);
+  return runName(r)+' · '+trendLabels[mode]+' · '+(r.build_profile||'historical')+' · '+date(r.finished||r.created)+' · median '+fmt(f.median_ticks)+' ticks · '+orderedOutcomes(Object.keys(f.counts)).map(k=>(names[k]||k)+': '+fmt(f.counts[k])).join(' · ')+(c?' · advanced '+fmt(c.advanced)+', regressed '+fmt(c.regressed)+' · '+fmt(c.compared_recordings)+' / '+fmt(f.total)+' matched vs '+c.previous_sha.slice(0,8):' · Scoped comparison unavailable');
 }
 function trendColumns(id,runs,draw){
-  const W=640,H=236,L=48,R=14,T=14,B=30,plotW=W-L-R,plotH=H-T-B,baseline=T+plotH,step=plotW/runs.length;
+  const W=Math.max(320,$(id).clientWidth||640),H=236,L=48,R=14,T=20,B=30,plotW=W-L-R,plotH=H-T-B,baseline=T+plotH,step=plotW/runs.length;
   const {svg,node}=svgCanvas(W,H),readout=$('trend-readout');
   draw({node,L,T,W,step,plotH,baseline});
   runs.forEach((r,i)=>{
     const x=L+i*step,description=trendDescription(r);
-    const group=node('g',{'class':'trend-column'+(r.id===selected?' selected':''),tabindex:0,role:'button','aria-label':'Open snapshot: '+description});
+    const group=node('g',{'class':'trend-column'+(r.id===selected?' selected':''),'data-run-id':r.id,tabindex:0,role:'button','aria-label':'Open snapshot: '+description});
     node('title',{},description,group);
     node('rect',{x,y:T,width:step,height:plotH,fill:'transparent','class':'trend-hitbox'},undefined,group);
     draw({node,group,r,i,x,step,L,T,W,plotH,baseline});
@@ -576,37 +587,41 @@ function trendColumns(id,runs,draw){
 }
 function renderTrend(){
   const runs=trendRuns();$('trend').hidden=runs.length<2;if(runs.length<2)return;
-  const total=runs[runs.length-1].fixed.total,series=orderedOutcomes(runs.flatMap(r=>Object.keys(r.fixed.counts)));
-  $('trend-note').textContent=fmt(runs.length)+' engine commits · '+fmt(total)+' fixed recordings';
+  const total=runs[runs.length-1][mode].total,series=orderedOutcomes(runs.flatMap(r=>Object.keys(r[mode].counts)));
+  $('trend-title').textContent=trendLabels[mode]+' across engine commits';
+  $('trend-note').textContent=fmt(runs.length)+' engine commits · '+fmt(total)+' frozen recordings';
+  $('trend-outcomes').setAttribute('aria-label',trendLabels[mode]+' outcome shares for each engine commit');
+  $('trend-ticks').setAttribute('aria-label',trendLabels[mode]+' median simulation ticks reached for each engine commit');
   $('trend-readout').textContent='Hover or focus a column to inspect it. Select it to open that snapshot.';
   trendColumns('trend-outcomes',runs,({node,group,r,x,step,L,W,plotH,baseline})=>{
     if(!group){for(const share of [0,.25,.5,.75,1]){const y=baseline-share*plotH;node('line',{x1:L,y1:y,x2:W-14,y2:y,style:'stroke:var(--line-soft)','stroke-dasharray':share?'3 4':'none'});node('text',{x:L-7,y:y+3,'text-anchor':'end'},share*100+'%');}return;}
     const width=Math.min(46,step*.62);let top=baseline;
     for(const key of series){
-      const count=r.fixed.counts[key]||0;if(!count)continue;
-      const height=count/r.fixed.total*plotH;top-=height;
+      const count=r[mode].counts[key]||0;if(!count)continue;
+      const height=count/r[mode].total*plotH;top-=height;
       node('rect',{x:x+(step-width)/2,y:top,width,height:Math.max(0,height-1),style:'fill:'+color(key)},undefined,group);
     }
   });
-  const ticks=runs.map(r=>r.fixed.median_ticks??0),axis=countAxis(Math.max(...ticks),'linear',170);
+  const ticks=runs.map(r=>Number.isFinite(r[mode].median_ticks)&&r[mode].median_ticks>=0?r[mode].median_ticks:null),axis=countAxis(Math.max(0,...ticks.filter(v=>v!==null)),'linear',170);
   trendColumns('trend-ticks',runs,({node,group,i,x,step,L,W,plotH,baseline})=>{
     const y=v=>baseline-v/axis.upper*plotH;
     if(!group){
       for(const tick of axis.ticks){node('line',{x1:L,y1:y(tick),x2:W-14,y2:y(tick),style:'stroke:var(--line-soft)','stroke-dasharray':tick?'3 4':'none'});node('text',{x:L-7,y:y(tick)+3,'text-anchor':'end'},fmt(tick));}
-      node('polyline',{points:ticks.map((v,j)=>(L+(j+.5)*step)+','+y(v)).join(' '),fill:'none',style:'stroke:var(--link)','stroke-width':2,'stroke-linejoin':'round'});return;
+      ticks.forEach((v,j)=>{if(j&&v!==null&&ticks[j-1]!==null)node('line',{x1:L+(j-.5)*step,y1:y(ticks[j-1]),x2:L+(j+.5)*step,y2:y(v),style:'stroke:var(--link)','stroke-width':2});});return;
     }
+    if(ticks[i]===null)return;
     node('circle',{cx:x+step/2,cy:y(ticks[i]),r:4,style:'fill:var(--link);stroke:var(--panel)','stroke-width':2},undefined,group);
     if(i===0||i===runs.length-1)node('text',{x:x+step/2,y:y(ticks[i])-10,'text-anchor':'middle','class':'trend-value'},fmt(ticks[i]),group);
   });
   $('trend-legend').replaceChildren(...series.map(k=>{const label=el('span'),swatch=el('i');swatch.style.background=color(k);label.append(swatch,document.createTextNode(names[k]||k));return label;}));
   const rows=[];
   for(const r of [...runs].reverse()){
-    const tr=el('tr'),c=r.comparison,f=r.fixed,open=el('button',runName(r),'text-button trend-open');
+    const tr=el('tr'),c=trendComparison(r),f=r[mode],open=el('button',runName(r),'text-button trend-open');
     open.onclick=()=>openSnapshot(r.id);if(r.id===selected){tr.className='selected';open.setAttribute('aria-current','true');}
-    const commit=el('td');commit.append(open);
-    const compared=c?.comparable?el('td'):el('td','—');
-    if(c?.comparable){compared.append(el('span',signed(c.improved)+' / '+(c.regressed?'−'+fmt(c.regressed):'0'),c.regressed?'negative':'positive'),el('small','vs '+c.previous_sha.slice(0,8)));}
-    tr.append(commit,el('td',date(r.created)),compared,el('td',fmt(f.counts.complete_checked||0)),el('td',fmt(f.counts.initialization_unsupported||0)),el('td',fmt(f.median_ticks)));
+    const commit=el('td');commit.append(open,el('small',r.build_profile||'Historical'));
+    const compared=c?el('td'):el('td','—');
+    if(c){compared.append(el('span',signed(c.advanced)+' / '+(c.regressed?'−'+fmt(c.regressed):'0'),c.regressed?'negative':'positive'),el('small',fmt(c.compared_recordings)+' / '+fmt(f.total)+' matched · vs '+c.previous_sha.slice(0,8)));if(c.warnings.length){compared.append(el('small','Comparison caveat'));compared.title=c.warnings.join('\n');}}
+    tr.append(commit,el('td',date(r.finished||r.created)),compared,el('td',fmt(f.counts.complete_checked||0)),el('td',fmt(f.counts.initialization_unsupported||0)),el('td',fmt(f.median_ticks)));
     rows.push(tr);
   }
   $('trend-rows').replaceChildren(...rows);
@@ -731,7 +746,7 @@ for(const id of ['search','status-filter','sort'])$(id).addEventListener('input'
 $('previous').onclick=()=>{page--;renderTable();};$('next').onclick=()=>{page++;renderTable();};
 function showTheme(){const light=document.documentElement.dataset.theme==='light';$('theme-toggle').textContent=light?'Dark theme':'Light theme';}
 $('theme-toggle').onclick=()=>{const next=document.documentElement.dataset.theme==='light'?'dark':'light';document.documentElement.dataset.theme=next;try{localStorage.setItem('genie-theme',next);}catch{}showTheme();};showTheme();
-globalThis.addEventListener?.('resize',()=>{if(data)renderCharts(data.run[mode]);});
+globalThis.addEventListener?.('resize',()=>{if(data){renderCharts(data.run[mode]);renderTrend();}});
 $('provenance').onclick=()=>$('method').showModal();$('close-method').onclick=()=>$('method').close();
 $('chart-scale').onchange=event=>{chartScale=event.currentTarget.value;if(data)renderCharts(data.run[mode]);};
 $('chart-outcome').onchange=event=>{chartOutcome=event.currentTarget.value;if(data)renderCharts(data.run[mode]);};

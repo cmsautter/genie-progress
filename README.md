@@ -108,6 +108,10 @@ Each response includes `resolution` (requested and measured SHA, `exact` or `fir
 
 ## Repository contents
 
+The engine-revision trend follows the selected **Core 500**, **Additional 500** or **Combined 1,000** view. It includes only completed full measurements with identical cohort membership, with one representative per engine revision and release builds preferred. Legacy-reference and run-corpus views are not blended into this series. A newer unfinished retry does not hide an eligible completed measurement. Select a chart column or table entry to open its snapshot. Every eligible revision remains displayed.
+
+Trend comparisons use compact `manifest.runs[].changes.summary` entries keyed by cohort, including `membership_sha256`, `total_recordings`, `compared_recordings`, `unpaired_recordings` and change-category counts. `changes.baseline_sha` identifies the comparison engine, and `changes.warnings` carries measurement caveats. These are the same scoped counts as the corresponding comparison sidecar. Missing summaries display a dash; the legacy-reference `comparison` counts are not substituted. Missing median ticks remain chart gaps, while a measured zero remains zero.
+
 Dashboard changes can be checked locally with `node --test tests/dashboard.test.cjs` (Node.js 20 or newer). The suite covers snapshot loading, frozen cohorts, diagnostics, report verification, TPS sorting, themes and responsive chart sizing. An optional `REAL_REPORT_DIRECTORY` containing a report bundle's `manifest.json`, `data`, `coverage` and `changes` enables the full-report integration check. Also inspect dark and light themes at desktop and phone widths when changing layout or colours.
 
 This repository contains the static dashboard and its report-deployment workflow. Sanitized report snapshots are available in the **Benchmark report snapshots** prerelease. The worker implementation is maintained separately.

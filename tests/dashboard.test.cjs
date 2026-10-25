@@ -920,3 +920,96 @@ test('pending light-theme swatches contrast with panel and outcome-bar backgroun
     assert.ok((a+.05)/(b+.05)>=3,'pending must contrast with '+background);
   }
 });
+
+function trendRun(id,index=0,extra={}){
+  const scoped=(total,hash,checked,ticks)=>({...summary(total,checked),total,finished:total,median_ticks:ticks,membership_sha256:hash.repeat(64)});
+  const r=run(id,404,1,{sha:(index+1).toString(16).padStart(40,'0'),status:'complete',build_profile:'release',
+    created:new Date(Date.UTC(2026,9,20,0,index)).toISOString(),finished:new Date(Date.UTC(2026,9,20,0,index,30)).toISOString(),
+    fixed:{...summary(404,1),total:404},growing:{...summary(1000,2),total:1000},
+    core500:scoped(500,'c',index+1,100+index),extension500:scoped(500,'d',index+10,500+index),combined1000:scoped(1000,'e',index+11,300+index),
+    comparison:{comparable:404,improved:99999,regressed:88888,previous_sha:'f'.repeat(40)},...extra});
+  r.changes={available:true,baseline_sha:'f'.repeat(40),warnings:[],summary:Object.fromEntries(['core500','extension500','combined1000'].map((scope,i)=>[scope,{
+    total_recordings:r[scope].total,membership_sha256:r[scope].membership_sha256,compared_recordings:r[scope].total,
+    advanced:index+i+2,regressed:1,unpaired_recordings:0}]))};
+  return r;
+}
+function trendManifest(runs){return {...manifest(runs),cohorts:{core500:{count:500},extension500:{count:500},combined1000:{count:1000}}};}
+
+test('trend follows each frozen cohort using scoped outcomes, medians and comparisons',async()=>{
+  const old=trendRun('old'),latest=trendRun('latest',1);
+  const a=await app(trendManifest([latest,old]));a.resolve('latest',payload(latest));await settle();
+  assert.equal(a.$('trend-title').textContent,'Core 500 across engine commits');
+  let row=a.$('trend-rows').children[0];
+  assert.match(row.children[2].textContent,/\+3 \/ −1.*500 \/ 500 matched/);
+  assert.equal(row.children[3].textContent,'2');assert.equal(row.children[5].textContent,'101');
+  a.$('extension500').onclick();row=a.$('trend-rows').children[0];
+  assert.equal(a.$('trend-title').textContent,'Additional 500 across engine commits');
+  assert.match(row.children[2].textContent,/\+4 \/ −1/);
+  assert.equal(row.children[3].textContent,'11');assert.equal(row.children[5].textContent,'501');
+  a.$('combined1000').onclick();row=a.$('trend-rows').children[0];
+  assert.equal(a.$('trend-title').textContent,'Combined 1,000 across engine commits');
+  assert.match(row.children[2].textContent,/\+5 \/ −1.*1,000 \/ 1,000 matched/);
+  assert.equal(row.children[3].textContent,'12');assert.equal(row.children[5].textContent,'301');
+  assert.doesNotMatch(a.$('trend-rows').textContent,/99,999|88,888/);
+});
+
+test('trend excludes changed membership, partial cohorts, pilots and legacy-only runs',async()=>{
+  const old=trendRun('old'),latest=trendRun('latest',1),wrong=trendRun('wrong',2),partial=trendRun('partial',3),pilot=trendRun('pilot',4,{pilot:true});
+  wrong.core500.membership_sha256='f'.repeat(64);partial.core500.finished=499;
+  const legacy=run('legacy',5604,3,{status:'complete',sha:'9'.repeat(40)});
+  const a=await app(trendManifest([latest,old,wrong,partial,pilot,legacy]));
+  // Use latest's immutable set even when another run was created more recently.
+  await a.choose('latest');
+  assert.deepEqual(Array.from(a.context.trendRuns(),r=>r.id),['old','latest']);
+});
+
+test('unfinished retries do not hide completed releases and trend clicks keep them selectable',async()=>{
+  const old=trendRun('old'),complete=trendRun('release',1),retry=trendRun('retry',2,{sha:complete.sha,status:'running'}),profiling=trendRun('profiling',1,{sha:complete.sha,build_profile:'forced'});
+  const a=await app(trendManifest([retry,complete,profiling,old]));
+  assert.deepEqual(Array.from(a.context.trendRuns(),r=>r.id),['old','release']);
+  assert.ok(!a.$('run-select').options.some(o=>o.value==='release'));
+  a.$('trend-rows').children[0].children[0].children[0].onclick();await settle();
+  assert.equal(a.$('run-select').value,'release');
+  assert.ok(a.$('run-select').options.some(o=>o.value==='release'));
+  a.resolve('release',payload(complete));await settle();await a.refresh();
+  assert.equal(a.$('run-select').value,'release');
+});
+
+test('failed retries preserve completed candidates and release preference',async()=>{
+  const old=trendRun('old'),complete=trendRun('release',1),failed=trendRun('failed',2,{sha:complete.sha,status:'build_failed'}),profiling=trendRun('profiling',1,{sha:complete.sha,build_profile:'forced'});
+  const a=await app(trendManifest([failed,complete,profiling,old]));
+  assert.deepEqual(Array.from(a.context.trendRuns(),r=>r.id),['old','release']);
+});
+
+test('trend does not blend legacy and run-corpus scopes into the frozen series',async()=>{
+  const old=trendRun('old'),latest=trendRun('latest',1);
+  const a=await app(trendManifest([latest,old]));
+  assert.equal(a.$('trend').hidden,false);
+  a.$('fixed').onclick();assert.equal(a.$('trend').hidden,true);
+  a.$('growing').onclick();assert.equal(a.$('trend').hidden,true);
+  a.$('core500').onclick();assert.equal(a.$('trend').hidden,false);
+});
+
+test('missing scoped comparison stays unavailable rather than using legacy counts',async()=>{
+  const old=trendRun('old'),latest=trendRun('latest',1);delete latest.changes.summary;
+  const a=await app(trendManifest([latest,old]));
+  assert.equal(a.$('trend-rows').children[0].children[2].textContent,'—');
+  assert.equal(a.changesCalls.length,1,'trend summaries must not fetch each historical sidecar');
+  assert.equal(a.changesCalls[0].id,'latest');
+});
+
+test('missing median is a gap while a genuine zero median remains a plotted point',async()=>{
+  const old=trendRun('zero'),latest=trendRun('missing',1);old.core500.median_ticks=0;latest.core500.median_ticks=null;
+  const a=await app(trendManifest([latest,old]));
+  const svg=a.$('trend-ticks').children[0],groups=svg.children.filter(n=>n['class']?.startsWith('trend-column'));
+  assert.equal(groups[0].children.filter(n=>n.tag==='circle').length,1);
+  assert.equal(groups[1].children.filter(n=>n.tag==='circle').length,0);
+  assert.equal(a.$('trend-rows').children[0].children[5].textContent,'—');
+});
+
+test('all eligible measurements remain displayed without new aggregation or paging',async()=>{
+  const runs=Array.from({length:60},(_,i)=>trendRun('run-'+i,i));
+  const a=await app(trendManifest(runs));
+  assert.equal(a.context.trendRuns().length,60);assert.equal(a.$('trend-rows').children.length,60);
+  assert.equal(a.$('trend-outcomes').children[0].children.filter(n=>n['class']?.startsWith('trend-column')).length,60);
+});
