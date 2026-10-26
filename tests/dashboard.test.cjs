@@ -225,11 +225,12 @@ test('selector keeps the four requested snapshots and archives superseded attemp
   const previous=run('previous',5604,9,{status:'complete',created:'2026-10-19T18:16:00Z',build_profile:'forced'});
   const a=await app(manifest([release,profiling,duplicate,failed,previous,pilot,baseline]));
   assert.deepEqual(a.$('run-select').options.map(o=>o.value),['release','profiling','previous','baseline']);
-  assert.match(a.$('run-select').options[0].textContent,/Release · In progress/);
-  assert.match(a.$('run-select').options[1].textContent,/Profiling · Complete/);
+  assert.match(a.$('run-select').options[0].textContent,/Release.*In progress/);
+  assert.match(a.$('run-select').options[1].textContent,/Profiling.*Complete/);
   assert.equal(a.$('archived-count').textContent,'3');
   assert.equal(a.$('archived-list').children.length,3);
-  assert.ok(a.$('archived-list').children.some(li=>li.children[0].href==='data/old-complete.json'));
+  assert.ok(a.$('archived-list').children.some(li=>li.children[0].href==='index.html?run=old-complete&cohort=fixed'));
+  assert.ok(a.$('archived-list').children.some(li=>li.children[2].href==='data/old-complete.json'));
 });
 
 test('a new unresolved failure stays visible and a growing rerun replaces the previous same-profile entry',async()=>{
@@ -744,8 +745,7 @@ test('frozen core is the default and each bucket filters independently of legacy
   assert.equal(a.$('rows').children[0].children[0].textContent,'202');
   a.$('combined1000').onclick();assert.equal(a.$('measured').textContent,'3');
   assert.match(a.$('row-count').textContent,/3 matching recordings/);
-  a.$('fixed').onclick();assert.equal(a.$('measured').textContent,'1');
-  assert.equal(a.$('rows').children[0].children[0].textContent,'201');
+  assert.equal(a.$('fixed').hidden,true);assert.equal(a.$('growing').hidden,true);
 });
 test('hash-pinned details reject inconsistent cohort membership',async()=>{
   const {r,m,value}=frozenFixture();value.rows[0].cohorts=[];
@@ -990,7 +990,7 @@ test('main page links to cohort trends without embedding engine-independent hist
   assert.equal(a.$('trend-rows').children.length,0);
   assert.equal(a.$('trend-link').href,'trends.html?cohort=core500');
   a.$('extension500').onclick();assert.equal(a.$('trend-link').href,'trends.html?cohort=extension500');
-  a.$('fixed').onclick();assert.equal(a.$('trend-link').href,'trends.html?cohort=combined1000');
+  a.$('combined1000').onclick();assert.equal(a.$('trend-link').href,'trends.html?cohort=combined1000');
   const html=fs.readFileSync(path.join(__dirname,'../site/index.html'),'utf8');
   assert.doesNotMatch(html,/<section id="trend"/);
   const trends=fs.readFileSync(path.join(__dirname,'../site/trends.html'),'utf8');
@@ -1050,4 +1050,29 @@ test('trend gains and losses have separate colours and outcome columns partition
   const html=fs.readFileSync(path.join(__dirname,'../site/trends.html'),'utf8');
   assert.doesNotMatch(html,/<th>Unsupported initialization/);
   assert.match(html,/<th>Unsupported update<\/th><th>Checkpoint mismatch<\/th>/);
+});
+
+test('one-off large corpus shows reference and full tabs, stage progress, limits and no restart',async()=>{
+  const full=run('full',5604,8,{workflow:{kind:'one_off_full',measurement_policy:{replay_seconds:300,step_seconds:10,maximum_workers:16,timeout_retries:0}},execution:{stage:'corpus_tail',active_sessions:12},scheduling:{stages:[{id:'reference5604',finished:5604,total:5604},{id:'corpus_tail',finished:44,total:8183}]}});
+  full.growing={...full.growing,total:13787,finished:5648};
+  const a=await app(manifest([full]),{search:'?run=full&cohort=growing'});
+  assert.equal(a.$('fixed').hidden,false);assert.equal(a.$('growing').hidden,false);
+  assert.equal(a.$('measured').textContent,'5,648');
+  assert.match(a.$('run-state').textContent,/One-off corpus.*Remaining corpus.*12 active/);
+  assert.match(a.$('scheduling-note').textContent,/Reference: 5,604 \/ 5,604.*Remaining corpus: 44 \/ 8,183/);
+  assert.match(a.$('scheduling-note').textContent,/300s per replay, 10s per update, up to 16 workers.*No timeout retries.*stays disabled/);
+  a.$('fixed').onclick();assert.equal(a.$('measured').textContent,'5,604');
+  assert.equal(a.$('reference-count').textContent,'5,604');
+  assert.equal(a.$('catalog-count').textContent,'13,787');
+});
+
+test('baseline and one-off on the same engine remain separately selectable',async()=>{
+  const {r,m}=frozenFixture();
+  const full=run('same-engine-full',5604,8,{sha:r.sha,created:'2026-10-26T06:00:00Z',workflow:{kind:'one_off_full',measurement_policy:{replay_seconds:300,step_seconds:10,maximum_workers:16}}});
+  full.growing={...full.growing,total:13787};m.runs.push(full);
+  const a=await app(m);
+  assert.deepEqual(a.$('run-select').options.map(o=>o.value),['same-engine-full','frozen']);
+  assert.equal(a.$('fixed')['aria-pressed'],true);
+  await a.choose('frozen');
+  assert.equal(a.$('fixed').hidden,true);assert.equal(a.$('core500')['aria-pressed'],true);
 });

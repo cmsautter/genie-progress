@@ -8,14 +8,20 @@ Reproducible progress measurements for [GenieRust](https://github.com/librematch
 
 * **Core 500:** the default view, with immutable recording IDs and SHA256 hashes chosen for engine-feature and failure coverage.
 * **Additional 500:** a disjoint fixed extension. **Combined 1,000** contains both sets and is tested for ordinary engine revisions.
-* **Run corpus:** the recordings actually scheduled in that run. Ordinary engine revisions use the fixed 1,000; historical larger runs remain available.
-* **Legacy reference:** members of the original frozen **5,604 recordings** scheduled in that snapshot, retained for historical comparisons. Full legacy/corpus runs no longer start automatically for each engine revision.
+* **Full corpus:** all recordings scheduled in a large-corpus snapshot. This tab appears only for larger runs.
+* **Reference:** members of the original frozen **5,604 recordings**, available alongside Full corpus on large-corpus snapshots. Ordinary baseline snapshots show only the three fixed cohort tabs.
 
 The core runs before the additional set, with shorter last failures first inside each bucket. Both core and combined completion request early publication. Membership stays fixed as the engine improves, including cases that become successful. The feature-focused sample is a stable comparison baseline; its success rate must not be extrapolated to the full corpus.
 
 The initial reference targets full internal build **158041**, public game version **101.103.26969.0**, using matching game data. Every run identifies its upstream engine commit, diagnostic instrumentation, toolchain, architecture, data fingerprints and replay hashes.
 
-Snapshot history retains the newest 30 distinct engine revision and build profile pairs, with the historical baseline pinned separately. Repeated runs as the corpus grows replace that revision's representative instead of pushing older revisions out. A completed snapshot remains available alongside an unfinished or failed retry of the same revision.
+Snapshot history retains the newest 30 distinct engine revision and build profile pairs, with the historical baseline pinned separately. Repeated runs as the corpus grows replace that revision's representative instead of pushing older revisions out. A completed snapshot remains available alongside an unfinished or failed retry of the same revision. Historical large-corpus checkpoints and explicit one-off sweeps are pinned separately; a one-off and a baseline on the same engine remain individually selectable.
+
+## One-off full-corpus sweeps
+
+A manually requested sweep can measure the original **5,604 recordings first**, then the rest of a frozen **13,787-recording catalog**. Every case directly uses a **300-second replay deadline**, **10-second simulation-update watchdog**, and **at most 16 workers** with adaptive memory admission. There is **no timeout retry pass**. The panel shows both stage counts and limits; completion does not start another run. This does not restore periodic full-corpus testing.
+
+Restored historical large-corpus checkpoints have exact-version JSON endpoints; archival payloads are not duplicated into descendant fallbacks. Ordinary retained snapshots continue to support descendant resolution.
 
 ## What is measured
 
@@ -27,7 +33,7 @@ Completed recordings with matching usable checkpoints are separate from recordin
 
 **Changes since the previous snapshot** lists every measured replay whose progress or stopping diagnostics changed. Each row shows ticks reached and checkpoints passed **before and now**, signed deltas, and both stopping reasons. Expand a reason for all reported conditions or checkpoint categories; **Progress details** also shows changed failure ticks, last matching checkpoint ticks, ignored command counts and recording-length metadata.
 
-The comparison uses the most recently completed test of a **different engine commit before the selected run started**. Recordings are paired by identical SHA256 hashes. Newly added or ambiguous recordings and tests still pending are counted separately. Runtime-only differences and diagnostic list ordering do not count as changes. Gains and losses across ticks, matching checkpoints and EOF status are classified as advanced, regressed or mixed; changed recording lengths are labelled separately. Differences in build profile, architecture, game data, instrumentation or resource limits are identified where known.
+The comparison uses the most recently completed test of a **different engine commit before the selected run started**. Explicit one-off sweeps prefer the previous large-corpus test, and identify changed timeout/measurement policies. Recordings are paired by identical SHA256 hashes. Newly added or ambiguous recordings and tests still pending are counted separately. Runtime-only differences and diagnostic list ordering do not count as changes. Gains and losses across ticks, matching checkpoints and EOF status are classified as advanced, regressed or mixed; changed recording lengths are labelled separately. Differences in build profile, architecture, game data, instrumentation or resource limits are identified where known.
 
 Use the fixed or growing corpus tabs, search by match ID or stopping reason, filter regressions or EOF transitions, and sort by tick or checkpoint gains/losses. **Download changes JSON** provides the full list for the selected run. Active runs update as more results arrive. A missing earlier retained report is reported explicitly, without substituting an unrelated baseline.
 

@@ -30,7 +30,7 @@ let modeChosen=false;
 const trendPage=document.body?.dataset?.page==='trends';
 const pageQuery=new URLSearchParams(globalThis.location?.search||'');
 const requestedScope=pageQuery.get('cohort');
-if(cohortScopes.includes(requestedScope)){mode=requestedScope;modeChosen=true;}
+if((trendPage?cohortScopes:corpusScopes).includes(requestedScope)){mode=requestedScope;modeChosen=true;}
 const requestedRun=pageQuery.get('run');
 if(!trendPage&&/^[A-Za-z0-9_-]+$/.test(requestedRun||'')){selected=requestedRun;followLatest=false;}
 const inScope=(row,scope=mode)=>scope==='growing'||(scope==='fixed'?!!row.fixed:row.cohorts?.includes(scope));
@@ -182,8 +182,9 @@ function date(value){return value ? new Date(value).toLocaleString(undefined,{da
 function visibleRuns(runs){
   const seen=new Set();
   return [...runs].sort((a,b)=>Date.parse(b.created)-Date.parse(a.created)).filter(r=>{
-    if(r.pilot||r.status==='continued')return false;
-    const key=r.imported?'historical:'+r.id:r.sha+':'+(r.build_profile||'legacy');
+    if((r.pilot||r.status==='continued')&&r.id!==selected)return false;
+    const series=r.workflow?.kind==='one_off_full'?'one-off':r.growing.total>1000?'full-corpus':'baseline';
+    const key=r.imported?'historical:'+r.id:r.sha+':'+(r.build_profile||'legacy')+':'+series;
     if(seen.has(key)&&!(r.id===selected&&r.status==='complete'))return false;
     seen.add(key);return true;
   });
@@ -197,7 +198,8 @@ function runStatus(r){
 }
 function runLabel(r){
   const profile=r.imported?'':({release:'Release',forced:'Profiling'}[r.build_profile]||r.build_profile||'');
-  return runName(r)+(profile?' · '+profile:'')+' · '+runStatus(r)+' · '+date(r.created);
+  const corpus=r.workflow?.kind==='one_off_full'?' · One-off '+fmt(r.growing.total):r.growing.total>1000&&!r.imported?' · Corpus '+fmt(r.growing.total):'';
+  return runName(r)+(profile?' · '+profile:'')+corpus+' · '+runStatus(r)+' · '+date(r.created);
 }
 function renderArchive(runs,visible){
   const shown=new Set(visible.map(r=>r.id)),archived=runs.filter(r=>!shown.has(r.id));
@@ -206,7 +208,9 @@ function renderArchive(runs,visible){
   $('archived-list').replaceChildren();
   for(const r of archived){
     const item=el('li'),link=el('a',runLabel(r));
-    link.href='data/'+encodeURIComponent(r.id)+'.json';link.download='';item.append(link);$('archived-list').append(item);
+    link.href=snapshotURL(r.id,r.growing.total>1000?'fixed':'combined1000');
+    const download=el('a','JSON ↓');download.href='data/'+encodeURIComponent(r.id)+'.json';download.download='';
+    item.append(link,document.createTextNode(' · '),download);$('archived-list').append(item);
   }
 }
 function syncSelector(runs,force=false){
@@ -293,13 +297,18 @@ async function loadDetails(run){
   }
 }
 function selectSnapshot(id){
-  const run=manifest.runs.find(r=>r.id===id&&!r.pilot&&r.status!=='continued');if(!run)return;
+  const run=manifest.runs.find(r=>r.id===id);if(!run)return;
   followLatest=false;selected=id;page=0;syncSelector(visibleRuns(manifest.runs),true);return loadDetails(run);
 }
 function render(){
-  if(!data)return;const r=data.run;if(!r[mode])mode='fixed';const s=r[mode];
+  if(!data)return;const r=data.run;
+  const largeCorpus=r.growing.total>1000||!r.combined1000;
+  if(!r[mode]||(!largeCorpus&&['fixed','growing'].includes(mode)))mode=r.core500?'core500':'fixed';
+  if(!modeChosen&&largeCorpus)mode='fixed';
+  const s=r[mode];
   $('trend-link').href=trendURL(mode);
   for(const scope of corpusScopes){$(scope).classList.toggle('active',mode===scope);$(scope).setAttribute('aria-pressed',mode===scope);if(cohortScopes.includes(scope)){$(scope).hidden=!r[scope];if(r[scope])$(scope+'-count').textContent=fmt(r[scope].total);}}
+  for(const scope of ['fixed','growing'])$(scope).hidden=!largeCorpus;
   $('reference-count').textContent=fmt(r.fixed.total);$('catalog-count').textContent=fmt(r.growing.total);
   const scopeText={core500:'The frozen core of 500 recordings, selected for engine-feature and failure coverage.',extension500:'The frozen 500 additional recordings, disjoint from the core.',combined1000:'The frozen 1,000-recording baseline: core 500 plus 500 additional recordings.'};
   $('scope-note').textContent=scopeText[mode]|| (mode==='fixed'?'Members of the original 5,604-recording reference scheduled in this snapshot. The legacy membership stays unchanged.':r.workflow&&r.growing.total===1000?'The 1,000 scheduled baseline recordings.':'All recordings scheduled in this run.');
@@ -307,7 +316,8 @@ function render(){
   if(s.not_scheduled)$('scope-note').textContent+=' '+fmt(s.not_scheduled)+' members were not scheduled in this historical snapshot.';
   if(r.pilot)$('scope-note').textContent+=' This is a limited pilot; it does not cover the full cohort.';
   const retry=r.status==='running'&&r.execution?.phase==='retrying'?r.execution:null;
-  $('run-state').textContent='● '+(retry?'Timeout retries '+fmt(retry.retry_finished)+' / '+fmt(retry.retry_total)+' · '+fmt(retry.active_sessions)+' active':r.status==='running'&&r.execution?.phase==='finalizing'?'Finalizing results':r.status==='running'?'Measuring recordings':r.status==='complete'?'Run complete':runStatus(r));
+  const oneOff=r.workflow?.kind==='one_off_full',direct=r.status==='running'&&oneOff?r.execution:null;
+  $('run-state').textContent='● '+(direct?'One-off corpus · '+(direct.stage==='corpus_tail'?'Remaining corpus':'Reference first')+' · '+fmt(direct.active_sessions)+' active':retry?'Timeout retries '+fmt(retry.retry_finished)+' / '+fmt(retry.retry_total)+' · '+fmt(retry.active_sessions)+' active':r.status==='running'&&r.execution?.phase==='finalizing'?'Finalizing results':r.status==='running'?'Measuring recordings':r.status==='complete'?'Run complete':runStatus(r));
   renderSchedule(r);
   $('run-state').setAttribute('data-state',r.status);
   const commit=el('a',r.sha.slice(0,12));commit.href='https://github.com/librematch/genie/commit/'+r.sha;commit.target='_blank';commit.rel='noopener';$('commit').replaceChildren(commit);
@@ -350,16 +360,18 @@ function render(){
 }
 function renderChangeMetric(run){
   const stats=replayChanges?.run.id===run.id?replayChanges[mode]:null;
-  const c=cohortScopes.includes(mode)?{comparable:stats?.compared_recordings||0,improved:stats?.advanced||0,regressed:stats?.regressed||0}:run.comparison;
+  const c=stats?{comparable:stats.compared_recordings||0,improved:stats.advanced||0,regressed:stats.regressed||0}:cohortScopes.includes(mode)||mode==='growing'?null:run.comparison;
   $('advanced').textContent=c?.comparable?'+'+fmt(c.improved):'Baseline';
   $('advanced-sub').textContent=c?.comparable?fmt(c.regressed)+' regressions · '+fmt(c.comparable)+' comparable matches':'Reference for subsequent snapshots';
 }
 function renderSchedule(run){
   const note=$('scheduling-note');
-  const stages=(run.scheduling?.stages||[]).filter(s=>s.total&&['core500','extension500'].includes(s.id));
-  note.hidden=!stages.length;
-  const phaseNames={core500:'Core',extension500:'Additional'};
+  const oneOff=run.workflow?.kind==='one_off_full';
+  const stages=(run.scheduling?.stages||[]).filter(s=>s.total&&(oneOff?['reference5604','corpus_tail']:['core500','extension500']).includes(s.id));
+  note.hidden=!stages.length&&!oneOff;
+  const phaseNames={core500:'Core',extension500:'Additional',reference5604:'Reference',corpus_tail:'Remaining corpus'};
   let text=stages.map(s=>(phaseNames[s.id]||s.label)+': '+fmt(s.finished)+' / '+fmt(s.total)).join(' · ');
+  if(oneOff){const p=run.workflow.measurement_policy;text+=(text?' · ':'')+'One-off sweep: '+fmt(p.replay_seconds)+'s per replay, '+fmt(p.step_seconds)+'s per update, up to '+fmt(p.maximum_workers)+' workers. No timeout retries. Automatic testing stays disabled after completion.';}
   note.textContent=text;
 }
 function renderTiming(run,scope){

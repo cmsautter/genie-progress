@@ -47,6 +47,11 @@ def resolve(manifest):
         seen = {sha}
         while queue:
             requested, distance = queue.popleft()
+            # Restored large historical reports offer exact-version APIs. Do
+            # not multiply each 13k payload across long archival commit chains.
+            # Ordinary retained measurements keep their descendant resolution.
+            if distance and run.get('historical_full_corpus'):
+                continue
             if requested in covered:
                 rank = (distance, dt.datetime.fromisoformat(run['created']), sha)
                 if requested not in choices or rank < choices[requested][0]:
@@ -147,7 +152,7 @@ def build(directory):
         if stale.name != 'index.json' and stale.stem not in choices:
             stale.unlink()
     index = {'schema': 1, 'fingerprint': fingerprint,
-             'selection': 'Completed retained runs only. Exact revision first; otherwise the tested descendant with the fewest Git parent edges, ties by earliest run creation. No sibling-branch or older-build fallback.',
+             'selection': 'Completed retained runs only. Exact revision first; otherwise the tested descendant with the fewest Git parent edges, ties by earliest run creation. Restored historical full-corpus runs provide exact-version endpoints only. No sibling-branch or older-build fallback.',
              'coverage': 'Known commits at or after a retained measured ancestor; unknown, newer and out-of-window revisions have no endpoint.',
              'versions': entries}
     temporary = index_path.with_suffix('.tmp')
