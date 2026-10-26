@@ -540,48 +540,53 @@ test('actual full-size reports render, including a historical baseline when reta
   const m=JSON.parse(fs.readFileSync(path.join(directory,'manifest.json'),'utf8'));
   const current=m.runs.find(r=>!r.pilot&&r.status!=='continued'&&r.fixed.finished>=30);
   assert.ok(current,'a retained snapshot with recording results');
+  const scope=current.growing.total>1000||!current.combined1000?'fixed':'combined1000';
+  const allScope=current.growing.total>1000||!current.combined1000?'growing':'combined1000';
+  const scoped=row=>scope==='fixed'?row.fixed:row.cohorts?.includes(scope);
   const historical=m.runs.find(r=>r.imported);
   const available={};
   for(const r of m.runs){const file=path.join(directory,'coverage',r.id+'.json');if(fs.existsSync(file))available[r.id]=fileJSON(file);}
   const changes={};
   for(const r of m.runs){const file=path.join(directory,'changes',r.id+'.json');if(fs.existsSync(file))changes[r.id]=fileJSON(file);}
   const a=await app(m,{coverage:available,changes});
+  const firstVisibleID=()=>{const cell=a.$('rows').children[0].children[0];return cell.children[0]?.title||cell.textContent;};
   if(a.$('run-select').value!==current.id)await a.choose(current.id);
-  a.$('fixed').onclick();
+  a.$(scope).onclick();
   a.resolve(current.id,fileJSON(path.join(directory,'data',current.id+'.json')));await until(()=>a.$('rows').children.length===30||!a.$('error').hidden);
-  assert.equal(a.$('measured').textContent,current.fixed.finished.toLocaleString('en-US'));
+  assert.equal(a.$('measured').textContent,current[scope].finished.toLocaleString('en-US'));
   if(changes[current.id]?.available){
     assert.equal(a.$('changes-content').hidden,false);
-    assert.equal(a.$('changes-total').textContent,changes[current.id].fixed.changed_recordings.toLocaleString('en-US'));
+    assert.equal(a.$('changes-total').textContent,changes[current.id][scope].changed_recordings.toLocaleString('en-US'));
   }
   assert.equal(a.$('error').hidden,true);assert.equal(a.$('rows').children.length,30);
-  if(current.fixed.timing){
+  if(current[scope].timing){
     const precise=fileJSON(path.join(directory,'data',current.id+'.json'));
-    const timers=precise.rows.filter(r=>r.fixed&&typeof r.runtime_seconds==='number'&&Number.isFinite(r.runtime_seconds)&&r.runtime_seconds>=0).sort((a,b)=>b.runtime_seconds-a.runtime_seconds||a.match_id.localeCompare(b.match_id));
+    const timers=precise.rows.filter(r=>scoped(r)&&typeof r.runtime_seconds==='number'&&Number.isFinite(r.runtime_seconds)&&r.runtime_seconds>=0).sort((a,b)=>b.runtime_seconds-a.runtime_seconds||a.match_id.localeCompare(b.match_id));
     a.$('sort').value='time-desc';a.$('sort').oninput();
-    if(timers.length)assert.equal(a.$('rows').children[0].children[0].textContent,timers[0].match_id);
+    if(timers.length)assert.equal(firstVisibleID(),timers[0].match_id);
     assert.notEqual(a.$('replay-mean').textContent,'—');
     assert.notEqual(a.$('run-duration').textContent,'—');
-    const speeds=precise.rows.filter(r=>r.fixed&&Number.isFinite(r.completed_ticks)&&r.completed_ticks>=0&&Number.isFinite(r.runtime_seconds)&&r.runtime_seconds>0);
+    const speeds=precise.rows.filter(r=>scoped(r)&&Number.isFinite(r.completed_ticks)&&r.completed_ticks>=0&&Number.isFinite(r.runtime_seconds)&&r.runtime_seconds>0);
     for(const [sort,direction] of [['tps-asc',1],['tps-desc',-1]]){
       speeds.sort((a,b)=>direction*(a.completed_ticks/a.runtime_seconds-b.completed_ticks/b.runtime_seconds)||a.match_id.localeCompare(b.match_id));
       a.$('sort').value=sort;a.$('sort').oninput();
-      if(speeds.length)assert.equal(a.$('rows').children[0].children[0].textContent,speeds[0].match_id);
+      if(speeds.length)assert.equal(firstVisibleID(),speeds[0].match_id);
     }
   }
   const mismatchLabel=count=>count.toLocaleString('en-US')+' recording'+(count===1?'':'s');
-  assert.equal(a.$('checkpoint-count').textContent,mismatchLabel(current.fixed.counts.checkpoint_mismatch));
-  a.$('growing').onclick();
-  assert.equal(a.$('checkpoint-count').textContent,mismatchLabel(current.growing.counts.checkpoint_mismatch));
+  assert.equal(a.$('checkpoint-count').textContent,mismatchLabel(current[scope].counts.checkpoint_mismatch));
+  a.$(allScope).onclick();
+  assert.equal(a.$('checkpoint-count').textContent,mismatchLabel(current[allScope].counts.checkpoint_mismatch));
   if(available[current.id]){
     await until(()=>a.$('command-coverage-content').hidden===false);
     assert.equal(a.$('command-coverage-content').hidden,false);
-    assert.match(a.$('command-occurrences-count').textContent,new RegExp(available[current.id].growing.command_occurrences.toLocaleString('en-US')));
+    assert.match(a.$('command-occurrences-count').textContent,new RegExp(available[current.id][allScope].command_occurrences.toLocaleString('en-US')));
     assert.equal(a.$('command-rows').children.length,12);
   }
   a.$('fixed').onclick();
   if(!historical)return; // Older runs can be absent from the rolling export.
   await a.choose(historical.id);
+  a.$('fixed').onclick();
   assert.equal(a.$('measured').textContent,'5,604');assert.equal(a.$('checked').textContent,'9');
   a.resolve(historical.id,fileJSON(path.join(directory,'data',historical.id+'.json')));await until(()=>a.$('rows').children.length===30||!a.$('error').hidden);
   assert.equal(a.$('error').hidden,true);assert.equal(a.$('rows').children.length,30);
