@@ -1,0 +1,22 @@
+{
+  "first_scout_tick": 829,
+  "first_goat_tick": 839,
+  "onset_time": 13156,
+  "center": [
+    36.8,
+    86.0
+  ],
+  "onset_center_distance_genie": 0.4903338016869745,
+  "onset_center_distance_ca": 0.5051177125776287,
+  "scout_dat_extents": [
+    0.25,
+    0.25
+  ],
+  "goat_dat_extents": [
+    0.30000001192092896,
+    0.30000001192092896
+  ],
+  "nearby_objects": 15,
+  "scope": "All exported nearby units/scenery within five tiles of the fixed scene center during the scene window. Nearby membership is spatial context, not proof of causal involvement.",
+  "collision_geometry": "DAT extents are shown as footprint guides; full contact solver and adjusted pathing clearances are not reconstructed."
+}

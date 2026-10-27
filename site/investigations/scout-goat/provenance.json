@@ -1,0 +1,68 @@
+{
+  "build": {
+    "engine_sha": "a6cea327dc4a20ec6f47c7a9d9846140763a51f8",
+    "binary_sha256": "0c294d31d825a2959657d1896a3b496f16b88a7c48bf795ec1948897ee1af965",
+    "instrumentation": {
+      "cade_names.rs": "c417056d8fdb962edc2a970e34caa1fcb72fd945ffc25f4498603c4bfc06eaaf",
+      "cade_object_trace.rs": "02a993731a1990b7a6e2ed525ba4263777a337a6ec1cd5cf3416db6f87ba81b4",
+      "object_trace.rs": "1f2fb3d17821683d0c2541eb530356a7106c4af7f5ea18de0f8d8dec96079e3d"
+    },
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)",
+    "profile": "forced",
+    "source": "git archive from existing genie-progress/state/upstream.git; isolated source plus instrumentation module and example only",
+    "assets": {
+      "linkedTechs.json": "733a4e76a6af0196c213196f80e37ce0a2524111d7886a6eb13460f04295c153",
+      "empires2_x2_p1.dat": "347c7984c598508f2b9905172836287056e2cd101cac00177b64022421277dd4",
+      "dropsites.json": "45973aa4abdc91ff569436f4a5f95178eaa069988989a26fd99b4b6425645d13",
+      "PROVENANCE.json": "39acc354c42b76f934667c5450ac2cb09266d1b4b5ca2ec3cc69c0caf067b1dd",
+      "unitlines.json": "eb77401408551b530be656d36ca57ff64a851275d187e3e8072faca71b07fcd5"
+    },
+    "names_binary_sha256": "5d1d00b90cd6ee06f9c4475937c0510af0e9d2d3bf447b16e7e321f6db6a9965",
+    "archive_sha256": "e9c8cfb64d07c3d203e23fe7890ef31438c786bd40e3def9460eafbe14d2ad6e"
+  },
+  "replay_sha256": "c861f2bcd7cf450b6bffa824376b2c5f91983ce6193d3fdbc397587b851a9766",
+  "ca_capture_sha256": "cb1d937bbb221a3ca1830d4526b8a3d6d2ebf31127015015d432f77f44aa38e9",
+  "ca_decode_report": {
+    "frames": 23121,
+    "entity_updates": 1172563,
+    "complete": true,
+    "capture_sha256": "cb1d937bbb221a3ca1830d4526b8a3d6d2ebf31127015015d432f77f44aa38e9",
+    "schema_sha256": "693ab8abe8936f8ee9a33f378d680fe42c4ac6658394e3d0f32289fa3c0f5804",
+    "overrides_sha256": "ea3c6c10f0fb2887178102b7f65792983083fac757bb706f6d0e41ea680ac92d",
+    "completion_scope": "supplied capture only",
+    "unknown_fields": [
+      "unknown_59_raw",
+      "unknown_60_raw"
+    ],
+    "last_world_time": 302939,
+    "operation_counts": {
+      "4": 133284,
+      "2": 3335748,
+      "14": 29971,
+      "8": 196555,
+      "1": 2121391,
+      "11": 1540,
+      "7": 1713721,
+      "6": 120992,
+      "10": 146,
+      "3": 76291,
+      "12": 1284,
+      "9": 1815,
+      "5": 265
+    },
+    "entity_count": 2216,
+    "elapsed_seconds": 62.611422300338745
+  },
+  "genie_trace_sha256": "505a4e5d5f8ce2dcd8e8f17dca8671a794fe597273fe7af2a27f31a635a700c2",
+  "ca_resources_sha256": "9302656a3769559eb68363fa7230e1b1d8eac32a753f6353bdf349f7dc6d39ed",
+  "comparison_sources": {
+    "run_case.py": "3b88cf44bad7669eadfee386f00f8f9da41eb3c2a0cfee3b46cd05c085a4f61d",
+    "test_compare.py": "739fd9c4cef5dc289ee1e131222032e9bcd431b39e88aa2e8e65005f5e25bacf",
+    "prepare_engine.py": "afd29bcb57cffd8ee99d24e614df7102f169c9b07e81313b52057ac964e90044",
+    "render_report.py": "652e61ef6a753a07707ef62573d38f67099dbbac5c97726489213f8495f2f117",
+    "compare_resources.py": "14634a98a3da61b356ca7414b0eacf79a3335fe09726c837c6b683f928a459a9",
+    "export_ca_resources.py": "6c9e33b2b925b66a3aea86b439dfcc6a7e313e23286e4fce46ce8e2a7ede5c3b",
+    "compare.py": "e55238cc56b70064c56a88c12cbdafe7a5999cdc14497d5aca7edcbb394ca651"
+  },
+  "report_template_sha256": "9eb43369b50cc3ebbacec1f71da9abb9d1491c2c87e1218967136108a5adab45"
+}

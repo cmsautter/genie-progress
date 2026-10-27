@@ -1,0 +1,48 @@
+{
+  "matched_frames": 999,
+  "first_resource_difference": null,
+  "first_checksum_word_difference": null,
+  "first_by_resource": {},
+  "changed_objects_at_first_resource_difference": [],
+  "checkpoints": [
+    {
+      "checkpoint_tick": 499,
+      "state_world_time": 8853,
+      "player": 1,
+      "recorded_word": 600,
+      "genie_word": 600,
+      "ca_word": 600,
+      "ca_matches_recorded": true
+    },
+    {
+      "checkpoint_tick": 499,
+      "state_world_time": 8853,
+      "player": 2,
+      "recorded_word": 550,
+      "genie_word": 550,
+      "ca_word": 550,
+      "ca_matches_recorded": true
+    },
+    {
+      "checkpoint_tick": 999,
+      "state_world_time": 15353,
+      "player": 1,
+      "recorded_word": 500,
+      "genie_word": 500,
+      "ca_word": 500,
+      "ca_matches_recorded": true
+    },
+    {
+      "checkpoint_tick": 999,
+      "state_world_time": 15353,
+      "player": 2,
+      "recorded_word": 550,
+      "genie_word": 550,
+      "ca_word": 550,
+      "ca_matches_recorded": true
+    }
+  ],
+  "different_frames": 0,
+  "timeline": [],
+  "scope": "food, wood, stone, gold for non-Gaia players; exact f32 bits; resource transfer source not inferred from totals"
+}

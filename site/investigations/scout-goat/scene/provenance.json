@@ -1,0 +1,37 @@
+{
+  "genie_revision": "a6cea327dc4a20ec6f47c7a9d9846140763a51f8",
+  "engine_core_unchanged_from_pinned_snapshot": true,
+  "genie_trace_sha256": "505a4e5d5f8ce2dcd8e8f17dca8671a794fe597273fe7af2a27f31a635a700c2",
+  "ca_object_trace_sha256": "a65a33ed4f616f10b6d91b495db4605696582e7351b1802c5f77253828240eb5",
+  "renderer_project": "spritescout-github/src/ReplayViewer/SpriteScout.Replay.csproj",
+  "renderer_assembly_sha256": "c12d278de36590eab9aad694a16b431122b380fc0bb689a3c4dfd6c1e214d229",
+  "render_host_sha256": "febee225e79f7145e6c908dc0ba3dde25455fbd72fc2d19ebf07cb02d0503a76",
+  "native_source": {
+    "scene_export.rs": "7df16635ea851eb48adf465d049c4253ff609d4c2049b39386b5f69017f5b97c",
+    "scene_visuals.rs": "1d04c0c28c8d76f5fc3f2e870cc40cba99acb555c7ef803715cc35844831d453",
+    "cade_scene.rs": "d784fe41afd6368a06713e31584f73e0c0e229e508de92539d1dbb2fd606afa3"
+  },
+  "scripts": {
+    "extend_report.py": "1271f8ea8bfde99c2aa5066e9577f60dc82010127a7e9c0647440aae9a1dfd61",
+    "make_video.py": "14bcf5761e20a80d14172eab1809338a95d23103c764d3f6437152519baab349",
+    "build_scene.py": "dabb080765d571cb13d1bc8fa08e8d08c57bcc986cb8682035846cc2aa1c80d0",
+    "make_viewer_trace.py": "82e55ac805ae8003e3c323363d0047034398f27d29e39053a2d94115c3414316"
+  },
+  "media": {
+    "poster.png": "23e550e8a5c62e9569c6ccaaa42b88daa74c6d58e606b86b0e8b764d6a1b07a3",
+    "scout-goat-genie.mp4": "d413488a52d1617003e7f078d3dc15c80d354fd0d835bd11258da234ed79a4c7",
+    "scout-goat-genie.gif": "5c55da6472e6efb1ba3339b59e579d5efc1ae2335dea3830b07138e49b6d9fe6"
+  },
+  "browser_checks": {
+    "shared_scene_ready": true,
+    "default_tick": 829,
+    "goat_onset_button": 839,
+    "nearby_objects": 15,
+    "primary_only_objects": 2,
+    "video_metadata": "1152x648; no media errors"
+  },
+  "visual_inspection": [
+    "poster at index 829",
+    "combined scene in browser"
+  ]
+}
