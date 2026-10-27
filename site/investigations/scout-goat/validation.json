@@ -1,14 +1,1 @@
-{
-  "comparator_unit_tests": 6,
-  "comparator_unit_tests_passed": true,
-  "rust_build": "passed",
-  "html_javascript_completed": true,
-  "object_controls_boundary_test": "passed for scout/goat report",
-  "ca_position_words_match_recording_at_every_compared_checkpoint": true,
-  "genie_object_position_words_match_simulation_lanes": true,
-  "ca_resource_words_match_recording_at_every_compared_checkpoint": true,
-  "exact_aligned_updates": 999,
-  "ignored_commands": 0,
-  "simulation_end": "checkpoint_mismatch",
-  "rebuilt_trace_identical_sha256": true
-}
+{"comparator_unit_tests":6,"comparator_unit_tests_passed":true,"rust_build":"passed","html_javascript_completed":true,"object_controls_boundary_test":"passed for scout/goat report","ca_position_words_match_recording_at_every_compared_checkpoint":true,"genie_object_position_words_match_simulation_lanes":true,"ca_resource_words_match_recording_at_every_compared_checkpoint":true,"exact_aligned_updates":999,"ignored_commands":0,"simulation_end":"checkpoint_mismatch","rebuilt_trace_identical_sha256":true}

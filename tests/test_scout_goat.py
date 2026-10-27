@@ -40,6 +40,12 @@ class PublicCaseTests(unittest.TestCase):
   scene=json.loads(re.search(r'<script id="shared-scene-data" type="application/json">(.*?)</script>',page,re.S)[1])
   self.assertEqual(scene['summary']['nearby_objects'],15)
   self.assertEqual(scene['summary']['onset_time'],13156)
+ def test_compressed_scene_retains_all_embedded_numerical_evidence(self):
+  page=(CASE/'index.html').read_text()
+  embedded=json.loads(re.search(r'<script id="shared-scene-data" type="application/json">(.*?)</script>',page,re.S)[1])
+  with gzip.open(CASE/'scene/scene.json.gz','rt') as stream:download=json.load(stream)
+  self.assertEqual(embedded,download)
+  self.assertEqual(len(download['info']),15)
  def test_every_difference_row_is_valid_and_contiguous(self):
   rows=list(map(json.loads,gzip.open(CASE/'differences.jsonl.gz','rt')))
   self.assertEqual([r['tick_index'] for r in rows],list(range(999)))

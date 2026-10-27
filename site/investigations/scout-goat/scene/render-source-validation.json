@@ -1,9 +1,1 @@
-{
-  "revision": "a6cea327dc4a20ec6f47c7a9d9846140763a51f8",
-  "start_ms": 10010,
-  "end_ms": 15353,
-  "exported_ticks": 412,
-  "every_exported_position_matches_original_genie_trace": true,
-  "appearance_observer": "SpriteScout lobby_visuals.rs, read-only; no RNG draws",
-  "metadata": "SpriteScout zero-tick map/catalog and DAT-derived unit types"
-}
+{"revision":"a6cea327dc4a20ec6f47c7a9d9846140763a51f8","start_ms":10010,"end_ms":15353,"exported_ticks":412,"every_exported_position_matches_original_genie_trace":true,"appearance_observer":"SpriteScout lobby_visuals.rs, read-only; no RNG draws","metadata":"SpriteScout zero-tick map/catalog and DAT-derived unit types"}

@@ -1,6 +1,6 @@
 # Scout and goat replay investigation
 
-[Interactive report](index.html#shared-scene) · [SpriteScout MP4](scene/scout-goat-genie.mp4) · [GIF](scene/scout-goat-genie.gif) · [Screenshot](scene/poster.png)
+[Interactive report](index.html#shared-scene) · [SpriteScout MP4](scene/scout-goat-genie.mp4) · [GIF](scene/scout-goat-genie.gif) · [Screenshot](scene/poster.webp)
 
 Replay **430217696**, SHA256 `c861f2bcd7cf450b6bffa824376b2c5f91983ce6193d3fdbc397587b851a9766`, historical game build **158041 / 26969**, Genie revision **a6cea327dc4a20ec6f47c7a9d9846140763a51f8**.
 
