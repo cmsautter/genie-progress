@@ -1,9 +1,13 @@
 """Public-page checks: exact evidence/media retained, with no machine paths or inbound navigation."""
-import gzip,hashlib,json,re,unittest
+import base64,gzip,hashlib,json,re,unittest
 from html.parser import HTMLParser
 from pathlib import Path
 SITE=Path(__file__).resolve().parents[1]/'site'
 CASE=SITE/'investigations/scout-goat'
+def payload(page,id):
+ match=re.search(r'<script id="'+id+r'"[^>]*>(.*?)</script>',page,re.S)
+ if 'data-encoding="gzip-base64"' in match[0]:return json.loads(gzip.decompress(base64.b64decode(match[1])))
+ return json.loads(match[1])
 class PublicCaseTests(unittest.TestCase):
  def test_direct_page_requests_noindex(self):
   page=(CASE/'index.html').read_text()
@@ -31,18 +35,18 @@ class PublicCaseTests(unittest.TestCase):
   for name,digest in json.loads((CASE/'files.sha256.json').read_text()).items():
    self.assertEqual(hashlib.sha256((CASE/name).read_bytes()).hexdigest(),digest,name)
  def test_embedded_evidence_still_localizes_both_objects(self):
-  page=(CASE/'index.html').read_text();data=json.loads(re.search(r'<script id="data" type="application/json">(.*?)</script>',page,re.S)[1])
+  page=(CASE/'index.html').read_text();data=payload(page,'data')
   self.assertNotIn('path',data['candidate'])
   self.assertNotIn('assets_directory',data['provenance']['build'])
   self.assertEqual(data['report'],json.loads((CASE/'report.json').read_text()))
   first={o['id']:o['first_tick'] for o in data['report']['objects']}
   self.assertEqual(first,{3031:829,3250:839})
-  scene=json.loads(re.search(r'<script id="shared-scene-data" type="application/json">(.*?)</script>',page,re.S)[1])
+  scene=payload(page,'shared-scene-data')
   self.assertEqual(scene['summary']['nearby_objects'],15)
   self.assertEqual(scene['summary']['onset_time'],13156)
  def test_compressed_scene_retains_all_embedded_numerical_evidence(self):
   page=(CASE/'index.html').read_text()
-  embedded=json.loads(re.search(r'<script id="shared-scene-data" type="application/json">(.*?)</script>',page,re.S)[1])
+  embedded=payload(page,'shared-scene-data')
   with gzip.open(CASE/'scene/scene.json.gz','rt') as stream:download=json.load(stream)
   self.assertEqual(embedded,download)
   self.assertEqual(len(download['info']),15)
