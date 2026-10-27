@@ -1,0 +1,10 @@
+js-sha256 1.0.0
+Source: https://github.com/emn178/js-sha256
+Package: https://registry.npmjs.org/js-sha256/-/js-sha256-1.0.0.tgz
+Browser file: package/build/sha256.min.js (unmodified)
+License: MIT; see sha256.LICENSE.txt
+Package integrity: sha512-Bqxf6ENUzYIMzuELCmRNrJOVbjKH1oMgbfYJBKVr/W1Xf9fazpahqCbb24v1pR7XV1isuqhM+w9KWpK7zCyUQw==
+Browser file SHA256: a050d794e170699bd1a69d33908d0942c68901cb88347016064b60b240f0067e
+
+Used only when native Web Crypto is unavailable, such as plain HTTP LAN
+origins, to verify report bytes against the published SHA256 descriptors.

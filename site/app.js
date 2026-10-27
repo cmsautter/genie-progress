@@ -103,12 +103,19 @@ async function reportJSON(file,fallback,version,signal){
     if(!response.ok){if(attempt===0&&response.status===404&&file?.sha256)continue;const error=Error(response.status===404?'Report is not available in this published snapshot yet.':'Report could not be loaded.');error.status=response.status;throw error;}
     if(!file?.sha256)return response.json();
     if(!/^[a-f0-9]{64}$/.test(file.sha256))throw Error('Invalid report version.');
-    if(!globalThis.crypto?.subtle)throw Error('This browser cannot verify report versions.');
     const raw=await response.arrayBuffer();
-    const hash=[...new Uint8Array(await crypto.subtle.digest('SHA-256',raw))].map(v=>v.toString(16).padStart(2,'0')).join('');
+    const hash=await reportSHA256(raw);
     if(hash===file.sha256&&(file.bytes===undefined||file.bytes===raw.byteLength))return JSON.parse(new TextDecoder().decode(raw));
   }
   throw Error('A cache returned a different report version. Keeping the previous verified results and retrying on the next refresh.');
+}
+async function reportSHA256(raw){
+  if(globalThis.crypto?.subtle)
+    return [...new Uint8Array(await crypto.subtle.digest('SHA-256',raw))].map(v=>v.toString(16).padStart(2,'0')).join('');
+  // Native Web Crypto is unavailable on plain HTTP LAN origins. Keep the same
+  // byte verification there using the bundled, pinned browser implementation.
+  if(typeof globalThis.sha256==='function')return globalThis.sha256(new Uint8Array(raw));
+  throw Error('This browser cannot verify report versions.');
 }
 function el(tag, text, cls){const n=document.createElement(tag);if(text!==undefined)n.textContent=text;if(cls)n.className=cls;return n;}
 async function loadCheckpointDefinitions(){
@@ -367,11 +374,13 @@ function renderChangeMetric(run){
 function renderSchedule(run){
   const note=$('scheduling-note');
   const oneOff=run.workflow?.kind==='one_off_full';
+  const direct=run.workflow?.measurement_policy?.mode==='single_pass';
   const stages=(run.scheduling?.stages||[]).filter(s=>s.total&&(oneOff?['reference5604','corpus_tail']:['core500','extension500']).includes(s.id));
-  note.hidden=!stages.length&&!oneOff;
+  note.hidden=!stages.length&&!direct;
   const phaseNames={core500:'Core',extension500:'Additional',reference5604:'Reference',corpus_tail:'Remaining corpus'};
   let text=stages.map(s=>(phaseNames[s.id]||s.label)+': '+fmt(s.finished)+' / '+fmt(s.total)).join(' · ');
   if(oneOff){const p=run.workflow.measurement_policy;text+=(text?' · ':'')+'One-off sweep: '+fmt(p.replay_seconds)+'s per replay, '+fmt(p.step_seconds)+'s per update, up to '+fmt(p.maximum_workers)+' workers. No timeout retries. Automatic testing stays disabled after completion.';}
+  else if(direct){const p=run.workflow.measurement_policy;text+=(text?' · ':'')+'Single pass: '+fmt(p.replay_seconds)+'s per replay, '+fmt(p.step_seconds)+'s per update, up to '+fmt(p.maximum_workers)+' workers. No timeout retries.';}
   note.textContent=text;
 }
 function renderTiming(run,scope){

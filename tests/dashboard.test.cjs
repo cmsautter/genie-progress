@@ -79,7 +79,8 @@ async function app(initial=manifest(),options={}){
     return promise;
   }
   const events={};
-  const context=vm.createContext({document,Option,URLSearchParams,location:{search:options.search||''},fetch,AbortController,console,setInterval(){},Date,Map,Set,crypto:webcrypto,TextDecoder,Uint8Array,sessionStorage:options.storage,localStorage:options.themeStorage,addEventListener(name,fn){events[name]=fn;}});
+  const context=vm.createContext({document,Option,URLSearchParams,location:{search:options.search||''},fetch,AbortController,console,setInterval(){},Date,Map,Set,crypto:options.noNativeCrypto?{}:webcrypto,TextDecoder,Uint8Array,sessionStorage:options.storage,localStorage:options.themeStorage,addEventListener(name,fn){events[name]=fn;}});
+  vm.runInContext(fs.readFileSync(path.join(__dirname,'../site/sha256.min.js'),'utf8'),context);
   const source=fs.readFileSync(process.env.APP_JS||path.join(__dirname,'../site/app.js'),'utf8');
   vm.runInContext(source,context);await settle();
   function resolve(id,value){const call=calls.find(c=>c.id===id&&!c.done);assert.ok(call,'pending request for '+id);call.done=true;call.resolve(value);}
@@ -1080,4 +1081,43 @@ test('baseline and one-off on the same engine remain separately selectable',asyn
   assert.equal(a.$('fixed')['aria-pressed'],true);
   await a.choose('frozen');
   assert.equal(a.$('fixed').hidden,true);assert.equal(a.$('core500')['aria-pressed'],true);
+});
+
+test('plain HTTP checksum fallback matches native SHA-256 across binary block boundaries',async()=>{
+  const a=await app(manifest(),{noNativeCrypto:true});
+  for(const length of [0,3,55,56,63,64,65,1000,65537]){
+    const bytes=Uint8Array.from({length},(_,i)=>(i*197+83)&255);
+    assert.equal(await a.context.reportSHA256(bytes.buffer),createHash('sha256').update(bytes).digest('hex'));
+  }
+  const unicode=new TextEncoder().encode('Recording ✓ / 中文 / 🦀');
+  assert.equal(await a.context.reportSHA256(unicode.buffer),createHash('sha256').update(unicode).digest('hex'));
+});
+
+test('plain HTTP verifies pinned reports and rejects mismatched bytes before accepting a retry',async()=>{
+  const r=run('active',1,1),good=payload(r);r.files={details:versionFile('data',r,good)};
+  const a=await app(published([r,baseline],'2026-10-20T14:05:00Z'),{noNativeCrypto:true});
+  const wrong=structuredClone(good);wrong.rows[0].checkpoints_passed=9;
+  a.resolve('active',wrong);await until(()=>a.calls.length===2);
+  assert.equal(a.$('rows').children.length,0);
+  a.resolve('active',good);await until(()=>a.$('rows').children.length===1);
+  assert.equal(a.$('error').hidden,true);
+  assert.equal(a.$('rows').children[0].children[4].textContent,'1 / 1');
+});
+
+test('unavailable hashing still fails closed instead of displaying unverified reports',async()=>{
+  const r=run('active',1,1),good=payload(r);r.files={details:versionFile('data',r,good)};
+  const a=await app(published([r,baseline],'2026-10-20T14:05:00Z'),{noNativeCrypto:true});
+  a.context.sha256=undefined;
+  a.resolve('active',good);await until(()=>!a.$('error').hidden);
+  assert.match(a.$('error').textContent,/cannot verify report versions/);
+  assert.equal(a.$('rows').children.length,0);
+});
+
+test('automatic single-pass baseline shows direct limits without one-off stop messaging',async()=>{
+  const {r,m}=frozenFixture();
+  r.workflow.measurement_policy={mode:'single_pass',replay_seconds:300,step_seconds:10,maximum_workers:16,timeout_retries:0};
+  m.runs=[r];
+  const a=await app(m);
+  assert.match(a.$('scheduling-note').textContent,/Core: 2 \/ 2.*Additional: 1 \/ 1.*Single pass: 300s per replay, 10s per update, up to 16 workers.*No timeout retries/);
+  assert.doesNotMatch(a.$('scheduling-note').textContent,/One-off|stays disabled/);
 });

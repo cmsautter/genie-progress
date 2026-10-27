@@ -23,6 +23,12 @@ A manually requested sweep can measure the original **5,604 recordings first**, 
 
 Restored historical large-corpus checkpoints have exact-version JSON endpoints; archival payloads are not duplicated into descendant fallbacks. Ordinary retained snapshots continue to support descendant resolution.
 
+## Automatic single-pass policy
+
+Ordinary revisions use the fixed **500 + 500** baseline with **up to 16 workers**, **300 seconds per replay**, and a **10-second simulation-update watchdog**, directly on the first attempt. There is **no timeout retry pass**. Saved outcomes, including timeouts, survive recovery. The core finishes before the additional bucket starts; shorter previous failures stay first within each bucket. Older runs retain their original policies and comparisons flag changes to the measurement limits.
+
+The local HTTP/LAN preview verifies report checksums with bundled MIT-licensed js-sha256 1.0.0 when native Web Crypto is unavailable. HTTPS and localhost continue using native hashing.
+
 ## What is measured
 
 Recordings start from their saved headers. The simulation stops at its first reported unsupported condition, differing recorded checkpoint, resource limit or recording end. The dashboard shows ticks reached, progress distributions, first blockers and changes on identical reference recordings.
