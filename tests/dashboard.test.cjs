@@ -1121,3 +1121,70 @@ test('automatic single-pass baseline shows direct limits without one-off stop me
   assert.match(a.$('scheduling-note').textContent,/Core: 2 \/ 2.*Additional: 1 \/ 1.*Single pass: 300s per replay, 10s per update, up to 16 workers.*No timeout retries/);
   assert.doesNotMatch(a.$('scheduling-note').textContent,/One-off|stays disabled/);
 });
+
+test('progress buckets default to five percent only above a ten percent median',async()=>{
+  for(const [median,fine] of [[10,true],[10.0001,false],[0,true],[null,true],[NaN,true]]){
+    const r=structuredClone(active);r.fixed.median_percent=median;
+    r.fixed.histogram=[{label:'0–1%',counts:{unsupported:2}},{label:'5–6%',counts:{checkpoint_mismatch:3}},{label:'95–100%',counts:{complete_checked:1}}];
+    const a=await app(manifest([r]));
+    assert.equal(a.$('percent-fine-buckets').checked,fine,'median '+median);
+    assert.equal(histogramGroups(a).length,fine?3:20);
+    assert.match(a.$('percent-bucket-note').textContent,fine?/1% buckets through 10%/:/5% buckets throughout/);
+  }
+});
+
+test('five percent buckets merge exact outcome counts and retain the final completion bucket',async()=>{
+  const r=structuredClone(active);r.fixed.median_percent=15;
+  r.fixed.histogram=[
+    {label:'0–1%',counts:{unsupported:2,checkpoint_mismatch:1}},
+    {label:'4–5%',counts:{unsupported:3}},
+    {label:'5–6%',counts:{checkpoint_mismatch:4}},
+    {label:'9–10%',counts:{unsupported:7}},
+    {label:'10–15%',counts:{unsupported:11}},
+    {label:'95–100%',counts:{complete_checked:2,complete_unchecked:1}}];
+  r.fixed.ticks_histogram=[{label:'0–500',counts:{unsupported:23,checkpoint_mismatch:5}}];
+  const before=JSON.stringify(r.fixed.histogram),a=await app(manifest([r]));
+  const groups=histogramGroups(a);
+  assert.equal(groups.length,20);assert.equal(groups[0]['data-bucket'],'0–5%');assert.equal(groups[1]['data-bucket'],'5–10%');assert.equal(groups[19]['data-bucket'],'95–100%');
+  const counts=g=>Object.fromEntries(histogramBars(g).map(b=>[b['data-outcome'],b['data-count']]));
+  assert.deepEqual(counts(groups[0]),{unsupported:5,checkpoint_mismatch:1});
+  assert.deepEqual(counts(groups[1]),{unsupported:7,checkpoint_mismatch:4});
+  assert.deepEqual(counts(groups[2]),{unsupported:11});
+  assert.deepEqual(counts(groups[19]),{complete_unchecked:1,complete_checked:2});
+  groups[0].onfocus();assert.match(a.$('percent-chart-readout').textContent,/0–5%.*Unsupported update: 5.*Checkpoint mismatch: 1.*Total: 6/);
+  assert.equal(histogramGroups(a,'ticks-chart')[0]['data-bucket'],'0–500');
+  assert.equal(JSON.stringify(r.fixed.histogram),before);
+  a.$('percent-fine-buckets').checked=true;a.$('percent-fine-buckets').onchange({currentTarget:a.$('percent-fine-buckets')});
+  assert.equal(histogramGroups(a).length,6);assert.equal(histogramGroups(a)[0]['data-bucket'],'0–1%');
+  assert.equal(histogramGroups(a,'ticks-chart').length,1);
+});
+
+test('manual bucket choices survive live updates and stay specific to each snapshot and cohort',async()=>{
+  const {r,m,value}=frozenFixture();r.core500.median_percent=15;r.extension500.median_percent=5;m.runs=[r];
+  const a=await app(m);assert.equal(a.$('percent-fine-buckets').checked,false);
+  a.resolve(r.id,{...value,run:r});await settle();
+  a.$('percent-fine-buckets').checked=true;a.$('percent-fine-buckets').onchange({currentTarget:a.$('percent-fine-buckets')});
+  a.$('extension500').onclick();assert.equal(a.$('percent-fine-buckets').checked,true);
+  a.$('percent-fine-buckets').checked=false;a.$('percent-fine-buckets').onchange({currentTarget:a.$('percent-fine-buckets')});
+  a.$('core500').onclick();assert.equal(a.$('percent-fine-buckets').checked,true);
+  a.events.resize();assert.equal(a.$('percent-fine-buckets').checked,true);
+  const newer=structuredClone(m);newer.generated='2026-10-20T20:00:00Z';newer.runs[0].core500.median_percent=25;
+  a.setManifest(newer);const refreshing=a.refresh();await settle();a.resolve(r.id,{...value,run:newer.runs[0]});await refreshing;assert.equal(a.$('percent-fine-buckets').checked,true);
+  a.$('extension500').onclick();assert.equal(a.$('percent-fine-buckets').checked,false);
+  const other={...r,id:'another-snapshot',created:'2026-10-21T20:00:00Z'};other.extension500={...r.extension500,median_percent:5};
+  newer.runs.push(other);newer.generated='2026-10-21T20:00:00Z';a.setManifest(newer);const switching=a.refresh();await settle();a.resolve(other.id,{...value,run:other});await switching;
+  assert.equal(a.$('percent-fine-buckets').checked,true,'a new snapshot uses its own default');
+});
+
+test('unmodified default follows median updates and outcome filtering preserves the chosen grouping',async()=>{
+  const r=structuredClone(active);r.fixed.median_percent=9;r.fixed.histogram=[{label:'0–1%',counts:{unsupported:3,checkpoint_mismatch:2}}];
+  const a=await app(manifest([r]));assert.equal(a.$('percent-fine-buckets').checked,true);
+  a.resolve(r.id,payload(r));await settle();
+  const updated=structuredClone(r);updated.fixed.median_percent=11;
+  a.setManifest(manifest([updated],'2026-10-20T20:00:00Z'));const refreshing=a.refresh();await settle();a.resolve(r.id,payload(updated));await refreshing;assert.equal(a.$('percent-fine-buckets').checked,false);
+  a.$('chart-outcome').value='checkpoint_mismatch';a.$('chart-outcome').onchange({currentTarget:a.$('chart-outcome')});
+  assert.equal(histogramGroups(a).length,20);
+  assert.equal(histogramBars(histogramGroups(a)[0])[0]['data-count'],2);
+  a.$('chart-scale').value='linear';a.$('chart-scale').onchange({currentTarget:a.$('chart-scale')});
+  assert.equal(a.$('percent-fine-buckets').checked,false);
+});

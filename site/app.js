@@ -37,6 +37,8 @@ const inScope=(row,scope=mode)=>scope==='growing'||(scope==='fixed'?!!row.fixed:
 let manifestRequest=0, detailsReady=false, detailsLoading=false, detailsError='', pendingKey='', detailsController;
 let selectorKey='';
 let chartScale='log',chartOutcome='all',chartSelectorKey='';
+const progressBucketChoices=new Map();
+const progressBucketView=()=>data?.run.id+':'+mode;
 let commandCoverage,commandCoverageState='loading',commandCoverageError='',commandRequest=0,commandController,commandPendingKey='';
 let commandStandard='reviewed',commandShowAll=false;
 let replayChanges,changesError='',changesLoading=false,changesRequest=0,changesController,changesPendingKey='',changesPage=0;
@@ -552,6 +554,20 @@ function countAxis(maximum,scaleType,height){
   return {ticks,upper,scale:n=>n/upper*height};
 }
 function histogramOutcomes(summary){return orderedOutcomes([...summary.histogram,...summary.ticks_histogram].flatMap(b=>Object.keys(b.counts)));}
+function progressBuckets(buckets,fine){
+  if(fine)return buckets;
+  const merged=Array.from({length:20},(_,i)=>({label:i*5+'–'+(i+1)*5+'%',counts:{}}));
+  for(const bucket of buckets){
+    const range=/^(\d+)–(\d+)%$/.exec(bucket.label);
+    if(!range)return buckets;
+    const lo=Number(range[1]),hi=Number(range[2]),index=Math.floor(lo/5);
+    // Only merge whole existing intervals; never estimate a split from counts.
+    if(index<0||index>=20||hi<=lo||hi>(index+1)*5)return buckets;
+    for(const [key,count] of Object.entries(bucket.counts))
+      merged[index].counts[key]=(merged[index].counts[key]||0)+count;
+  }
+  return merged;
+}
 function renderCharts(summary){
   const keys=histogramOutcomes(summary);
   const select=$('chart-outcome'),key=JSON.stringify(keys);
@@ -565,7 +581,10 @@ function renderCharts(summary){
   const label=chartScale==='log'?'Log count axis':'Linear count axis';
   $('percent-scale-label').textContent=label;$('ticks-scale-label').textContent=label;
   $('chart-scale-note').textContent=chartScale==='log'?'Separate outcome bars share a baseline. Log mode uses log₁₀(count + 1), including zero. Hover or focus a bucket for exact counts.':'Separate outcome bars start at zero. Heights are proportional to counts. Hover or focus a bucket for exact counts.';
-  chart('percent-chart',summary.histogram);chart('ticks-chart',summary.ticks_histogram);
+  const view=progressBucketView(),fine=progressBucketChoices.has(view)?progressBucketChoices.get(view):!(Number.isFinite(summary.median_percent)&&summary.median_percent>10);
+  $('percent-fine-buckets').checked=fine;
+  $('percent-bucket-note').textContent=(fine?'1% buckets through 10%, then 5% buckets.':'5% buckets throughout (0–5%, 5–10%, …, 95–100%).')+' Each bucket has equal display width. Colours follow the outcome legend above. The default uses this view’s median simulation progress; your choice is kept for this snapshot and cohort.';
+  chart('percent-chart',progressBuckets(summary.histogram,fine));chart('ticks-chart',summary.ticks_histogram);
 }
 function svgCanvas(W,H){
   const ns='http://www.w3.org/2000/svg',svg=document.createElementNS(ns,'svg');svg.setAttribute('viewBox',`0 0 ${W} ${H}`);
@@ -807,6 +826,7 @@ for(const id of ['search','status-filter','sort'])$(id).addEventListener('input'
 $('previous').onclick=()=>{page--;renderTable();};$('next').onclick=()=>{page++;renderTable();};
 $('provenance').onclick=()=>$('method').showModal();$('close-method').onclick=()=>$('method').close();
 $('chart-scale').onchange=event=>{chartScale=event.currentTarget.value;if(data)renderCharts(data.run[mode]);};
+$('percent-fine-buckets').onchange=event=>{if(data){progressBucketChoices.set(progressBucketView(),event.currentTarget.checked);renderCharts(data.run[mode]);}};
 $('chart-outcome').onchange=event=>{chartOutcome=event.currentTarget.value;if(data)renderCharts(data.run[mode]);};
 $('chart-outcome').onblur=()=>{if(data&&chartSelectorKey!==JSON.stringify(histogramOutcomes(data.run[mode])))renderCharts(data.run[mode]);};
 $('command-standard').onchange=event=>{commandStandard=event.currentTarget.value;renderCommandCoverage();};
