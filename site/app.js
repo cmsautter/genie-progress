@@ -22,6 +22,14 @@ function orderedOutcomes(keys){
   const rank=key=>{const i=outcomeOrder.indexOf(key);return i<0?outcomeOrder.length:i;};
   return [...new Set(keys)].sort((a,b)=>rank(a)-rank(b)||a.localeCompare(b));
 }
+function chartLegend(id,items){
+  $(id).replaceChildren(...items.map(({label,fill,line=false})=>{
+    const item=el('span'),swatch=el('i',undefined,line?'legend-line':undefined);
+    swatch.style.background=fill;swatch.setAttribute('aria-hidden','true');
+    item.append(swatch,document.createTextNode(label));return item;
+  }));
+}
+const outcomeLegend=keys=>keys.map(key=>({label:names[key]||key,fill:color(key)}));
 const outcome = r => r.status === 'complete' ? (r.checkpoints_passed ? 'complete_checked':'complete_unchecked') : r.status;
 let manifest, data, mode = 'fixed', page = 0, selected = '', request = 0, followLatest = true;
 const cohortScopes=['core500','extension500','combined1000'];
@@ -171,6 +179,7 @@ function renderCheckpointGroups(){
     }
   }
   $('checkpoint-panel').hidden=!detailsReady||!rows.length;
+  chartLegend('checkpoint-legend',rows.length?outcomeLegend(['checkpoint_mismatch']):[]);
   $('checkpoint-count').textContent=fmt(rows.length)+(rows.length===1?' recording':' recordings');$('checkpoint-groups').replaceChildren();
   const ranked=[...groups.values()].sort((a,b)=>b.ids.size-a.ids.size||a.word-b.word);
   for(const group of ranked){
@@ -352,6 +361,7 @@ function render(){
   renderCharts(s);
   $('blockers').replaceChildren();for(const b of s.blockers.slice(0,7)){const item=el('div'),line=el('div',undefined,'blocker-label'),label=el('span',b.reason);label.title=b.reason;line.append(label,el('strong',fmt(b.count)));const track=el('div',undefined,'blocker-track'),fill=el('div');fill.style.width=100*b.count/Math.max(1,s.blockers[0].count)+'%';track.append(fill);item.append(line,track);$('blockers').append(item);}
   if(!s.blockers.length)$('blockers').append(el('p','No unsupported-condition results reported in this snapshot.','chart-note'));
+  chartLegend('blockers-legend',s.blockers.length?outcomeLegend(['unsupported']):[]);
     const error=detailsError||r.failure?.message||r.error;$('error').hidden=!error;$('error').textContent=error||'';
   $('failure-diagnostics').hidden=!r.failure;
   $('failure-diagnostic-text').textContent=r.failure?'Stage: '+r.failure.stage+'\nCode: '+r.failure.code+'\n\n'+(r.failure.details||r.failure.message):'';
@@ -583,7 +593,7 @@ function renderCharts(summary){
   $('chart-scale-note').textContent=chartScale==='log'?'Separate outcome bars share a baseline. Log mode uses log₁₀(count + 1), including zero. Hover or focus a bucket for exact counts.':'Separate outcome bars start at zero. Heights are proportional to counts. Hover or focus a bucket for exact counts.';
   const view=progressBucketView(),fine=progressBucketChoices.has(view)?progressBucketChoices.get(view):!(Number.isFinite(summary.median_percent)&&summary.median_percent>10);
   $('percent-fine-buckets').checked=fine;
-  $('percent-bucket-note').textContent=(fine?'1% buckets through 10%, then 5% buckets.':'5% buckets throughout (0–5%, 5–10%, …, 95–100%).')+' Each bucket has equal display width. Colours follow the outcome legend above. The default uses this view’s median simulation progress; your choice is kept for this snapshot and cohort.';
+  $('percent-bucket-note').textContent=(fine?'1% buckets through 10%, then 5% buckets.':'5% buckets throughout (0–5%, 5–10%, …, 95–100%).')+' Each bucket has equal display width. The default uses this view’s median simulation progress; your choice is kept for this snapshot and cohort.';
   chart('percent-chart',progressBuckets(summary.histogram,fine));chart('ticks-chart',summary.ticks_histogram);
 }
 function svgCanvas(W,H){
@@ -685,7 +695,8 @@ function renderTrend(){
     node('circle',{cx:x+step/2,cy:y(ticks[i]),r:4,style:'fill:var(--link);stroke:var(--panel)','stroke-width':2},undefined,group);
     if(i===0||i===runs.length-1)node('text',{x:x+step/2,y:y(ticks[i])-10,'text-anchor':'middle','class':'trend-value'},fmt(ticks[i]),group);
   });
-  $('trend-legend').replaceChildren(...series.map(k=>{const label=el('span'),swatch=el('i');swatch.style.background=color(k);label.append(swatch,document.createTextNode(names[k]||k));return label;}));
+  chartLegend('trend-legend',outcomeLegend(series.filter(k=>runs.some(r=>r[mode].counts[k]>0))));
+  chartLegend('trend-ticks-legend',[{label:'Median simulation ticks reached',fill:'var(--link)',line:true}]);
   const rows=[];
   for(const r of [...runs].reverse()){
     const tr=el('tr'),c=trendComparison(r),f=r[mode],open=el('a',runName(r),'trend-open');open.href=snapshotURL(r.id);
@@ -732,6 +743,7 @@ function chart(id,buckets){
   });
   if(!maximum)node('text',{x:L+plotW/2,y:T+plotH/2,'text-anchor':'middle'},'No recordings for this selection');
   $(id).replaceChildren(svg);
+  chartLegend(id+'-legend',outcomeLegend(series.filter(key=>chartOutcome!=='all'||buckets.some(b=>b.counts[key]>0))));
 }
 function renderTable(){
   if(!detailsReady){$('rows').replaceChildren();$('row-count').textContent=detailsError?'Recording details unavailable':'Loading recording details…';$('page-number').textContent='—';$('previous').disabled=true;$('next').disabled=true;return;}

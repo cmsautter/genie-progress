@@ -1188,3 +1188,32 @@ test('unmodified default follows median updates and outcome filtering preserves 
   a.$('chart-scale').value='linear';a.$('chart-scale').onchange({currentTarget:a.$('chart-scale')});
   assert.equal(a.$('percent-fine-buckets').checked,false);
 });
+
+test('each histogram legend follows its own visible outcomes and the outcome selection',async()=>{
+  const r=structuredClone(active);
+  r.fixed.histogram=[{label:'0–1%',counts:{unsupported:3,checkpoint_mismatch:2,parse_error:0}}];
+  r.fixed.ticks_histogram=[{label:'0–500',counts:{complete_checked:1,timeout:4}}];
+  r.fixed.blockers=[{reason:'Unmodelled update',count:3}];
+  const a=await app(manifest([r]));
+  const entries=id=>a.$(id).children.map(n=>({label:n.textContent,fill:n.children[0].style.background}));
+  assert.deepEqual(entries('percent-chart-legend'),[
+    {label:'Unsupported update',fill:'var(--outcome-unsupported)'},
+    {label:'Checkpoint mismatch',fill:'var(--outcome-checkpoint_mismatch)'}]);
+  assert.deepEqual(entries('ticks-chart-legend'),[
+    {label:'End reached · checkpoints match',fill:'var(--outcome-complete_checked)'},
+    {label:'Time limit',fill:'var(--outcome-timeout)'}]);
+  assert.equal(a.$('blockers-legend').textContent,'Unsupported update');
+  a.$('chart-outcome').value='checkpoint_mismatch';a.$('chart-outcome').onchange({currentTarget:a.$('chart-outcome')});
+  for(const id of ['percent-chart-legend','ticks-chart-legend'])assert.deepEqual(entries(id),[{label:'Checkpoint mismatch',fill:'var(--outcome-checkpoint_mismatch)'}]);
+  a.$('chart-outcome').value='all';a.$('chart-outcome').onchange({currentTarget:a.$('chart-outcome')});
+  assert.equal(entries('ticks-chart-legend').length,2);
+});
+
+test('trend legends distinguish outcome colors from the median line',async()=>{
+  const a=await trendApp(trendManifest([trendRun('old'),trendRun('new',1)]));
+  assert.match(a.$('trend-legend').textContent,/Unsupported update/);
+  assert.match(a.$('trend-legend').textContent,/End reached · checkpoints match/);
+  assert.equal(a.$('trend-ticks-legend').textContent,'Median simulation ticks reached');
+  const swatch=a.$('trend-ticks-legend').children[0].children[0];
+  assert.equal(swatch.style.background,'var(--link)');assert.equal(swatch.className,'legend-line');
+});
