@@ -17,6 +17,12 @@ SHA = re.compile(r'[0-9a-f]{40}')
 SCOPES = ('fixed', 'growing', 'core500', 'extension500', 'combined1000')
 
 
+def exact_only(run):
+    """Large sweeps and imported baselines must not expand the fallback window."""
+    return (run.get('historical_full_corpus', False) or run.get('imported', False)
+            or run.get('growing', {}).get('total', 0) > 1000)
+
+
 def resolve(manifest):
     """Exact completed run, otherwise nearest tested descendant by parent edges."""
     by_sha = {}
@@ -28,14 +34,15 @@ def resolve(manifest):
     parents = manifest.get('engine_lineage', {}).get('parents', {})
     assert all(SHA.fullmatch(sha) and isinstance(values, list)
                and all(SHA.fullmatch(p) for p in values) for sha, values in parents.items())
-    # Restrict fallback to history at/after a retained measured ancestor. Older
-    # commits outside that coverage window must not silently use a modern build.
+    # Anchor fallback only in retained ordinary measurements. Pinned historical
+    # baselines otherwise keep the window open indefinitely, multiplying the
+    # oldest retained ordinary payload across hundreds of archival commits.
     children = {}
     for sha, values in parents.items():
         for parent in values:
             children.setdefault(parent, []).append(sha)
-    covered = set(by_sha)
-    queue = deque(by_sha)
+    covered = {sha for sha, run in by_sha.items() if not exact_only(run)}
+    queue = deque(covered)
     while queue:
         for child in children.get(queue.popleft(), []):
             if child not in covered:
@@ -47,12 +54,11 @@ def resolve(manifest):
         seen = {sha}
         while queue:
             requested, distance = queue.popleft()
-            # Restored large historical reports offer exact-version APIs. Do
-            # not multiply each 13k payload across long archival commit chains.
-            # Ordinary retained measurements keep their descendant resolution.
-            if distance and run.get('historical_full_corpus'):
+            # Every retained measured revision keeps its exact endpoint. Large
+            # one-off sweeps also stay exact-only, regardless of their age.
+            if distance and exact_only(run):
                 continue
-            if requested in covered:
+            if distance == 0 or requested in covered:
                 rank = (distance, dt.datetime.fromisoformat(run['created']), sha)
                 if requested not in choices or rank < choices[requested][0]:
                     choices[requested] = (rank, run)
@@ -152,8 +158,8 @@ def build(directory):
         if stale.name != 'index.json' and stale.stem not in choices:
             stale.unlink()
     index = {'schema': 1, 'fingerprint': fingerprint,
-             'selection': 'Completed retained runs only. Exact revision first; otherwise the tested descendant with the fewest Git parent edges, ties by earliest run creation. Restored historical full-corpus runs provide exact-version endpoints only. No sibling-branch or older-build fallback.',
-             'coverage': 'Known commits at or after a retained measured ancestor; unknown, newer and out-of-window revisions have no endpoint.',
+             'selection': 'Completed retained runs only. Exact revision first; otherwise the ordinary tested descendant with the fewest Git parent edges, ties by earliest run creation. Imported baselines and large sweeps provide exact-version endpoints only. No sibling-branch or older-build fallback.',
+             'coverage': 'Exact endpoints for all retained measurements. Fallbacks cover known commits at or after a retained ordinary measured ancestor; historical baselines and large sweeps do not extend that window. Unknown, newer and out-of-window unmeasured revisions have no endpoint.',
              'versions': entries}
     temporary = index_path.with_suffix('.tmp')
     temporary.write_text(json.dumps(index, ensure_ascii=False, separators=(',', ':')) + '\n')
