@@ -1217,3 +1217,65 @@ test('trend legends distinguish outcome colors from the median line',async()=>{
   const swatch=a.$('trend-ticks-legend').children[0].children[0];
   assert.equal(swatch.style.background,'var(--link)');assert.equal(swatch.className,'legend-line');
 });
+
+test('engine-and-match URL opens the exact change without adding visible permalink controls',async()=>{
+  const value=replayChanges(active);value.rows[1].fields_changed.push('first_failure_tick');
+  const a=await app(manifest(),{search:'?engine='+active.sha.slice(0,12)+'&match=2',changes:{active:value}});
+  assert.equal(a.$('run-select').value,active.id);
+  assert.equal(a.$('changes-rows').children.length,1);
+  const row=a.$('changes-rows').children[0];assert.equal(row['data-linked-change'],'true');
+  assert.match(row.children[2].textContent,/900 → 100/);assert.match(row.textContent,/Regressed/);
+  assert.equal(row.children[1].children.find(n=>n.tag==='details').open,true);
+  assert.equal(row.children[4].children[0].open,true);assert.equal(row.children[5].children[0].open,true);
+  assert.equal(a.$('changes-search').value,'2');assert.match(a.$('changes-row-count').textContent,/Linked recording 2/);
+  assert.equal(row.children[0].children.filter(n=>n.tag==='a').length,1,'only the existing replay link is visible');
+  a.$('changes-search').value='';a.$('changes-search').oninput();assert.equal(a.$('changes-rows').children.length,3);
+});
+
+test('match links resolve recording filenames and do not silently choose ambiguous matches',async()=>{
+  for(const query of ['2.aoe2record','Match_2.aoe2record.gz']){
+    const a=await app(manifest(),{search:'?run=active&match='+encodeURIComponent(query),changes:{active:replayChanges(active)}});
+    assert.equal(a.$('changes-rows').children.length,1);assert.equal(a.$('changes-search').value,'2');
+  }
+  const a=await app(manifest(),{search:'?run=active&match=Match_1_2.aoe2record',changes:{active:replayChanges(active)}});
+  assert.equal(a.$('changes-rows').children.length,0);assert.match(a.$('changes-row-count').textContent,/multiple recordings/);
+});
+
+test('missing snapshot or ambiguous engine prefix never substitutes another engine',async()=>{
+  const missing=await app(manifest(),{search:'?engine=0123456789ab&match=2'});
+  assert.match(missing.$('error').textContent,/No retained engine snapshot/);assert.equal(missing.calls.length,0);
+  const b={...baseline,sha:active.sha.slice(0,8)+'f'.repeat(32)};
+  const ambiguous=await app(manifest([active,b]),{search:'?engine='+active.sha.slice(0,8)+'&match=2'});
+  assert.match(ambiguous.$('error').textContent,/ambiguous/);assert.equal(ambiguous.calls.length,0);
+  const wrong=await app(manifest(),{search:'?run=active&engine=01234567&match=2'});
+  assert.match(wrong.$('error').textContent,/do not match/);assert.equal(wrong.calls.length,0);
+});
+
+test('exact run links keep that attempt while engine links prefer its completed measurement',async()=>{
+  const complete={...active,id:'completed',status:'complete',build_profile:'release',finished:'2026-10-20T00:00:00Z'};
+  const retry={...active,id:'retry',created:'2026-10-21T00:00:00Z'};
+  const m=manifest([retry,complete]);
+  const engine=await app(m,{search:'?engine='+active.sha.slice(0,8)+'&match=2',changes:{completed:replayChanges(complete)}});
+  assert.equal(engine.$('run-select').value,'completed');assert.equal(engine.$('changes-rows').children.length,1);
+  const exact=await app(m,{search:'?run=retry&match=2',changes:{retry:replayChanges(retry)}});
+  assert.equal(exact.$('run-select').value,'retry');
+});
+
+test('missing linked changes report their absence and late responses preserve the target',async()=>{
+  const a=await app(manifest(),{search:'?run=active&match=2',deferChanges:true});
+  assert.equal(a.$('changes-rows').children.length,0);assert.match(a.$('changes-state').textContent,/Loading/);
+  a.resolveChanges('active',replayChanges(active));await settle();assert.equal(a.$('changes-search').value,'2');
+  const missing=await app(manifest(),{search:'?run=active&match=99999',changes:{active:replayChanges(active)}});
+  assert.equal(missing.$('changes-rows').children.length,0);assert.match(missing.$('changes-row-count').textContent,/No compared change found/);
+});
+
+test('linked changes default to the combined cohort and respect an explicitly narrower cohort',async()=>{
+  const r=trendRun('cohort-run');delete r.changes;const value=replayChanges(r);value.growing.total_recordings=r.growing.total;
+  for(const scope of ['core500','extension500','combined1000'])value[scope]={...value.fixed};
+  value.rows[0].cohorts=['core500','combined1000'];value.rows[1].cohorts=['extension500','combined1000'];value.rows[2].cohorts=['core500','combined1000'];
+  const m=trendManifest([r]);
+  const a=await app(m,{search:'?engine='+r.sha+'&match=2',changes:{[r.id]:value}});
+  assert.equal(a.$('combined1000')['aria-pressed'],true);assert.equal(a.$('changes-rows').children.length,1);
+  const core=await app(m,{search:'?engine='+r.sha+'&cohort=core500&match=2',changes:{[r.id]:value}});
+  assert.equal(core.$('changes-rows').children.length,0);assert.match(core.$('changes-row-count').textContent,/outside this cohort/);
+});

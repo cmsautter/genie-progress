@@ -133,3 +133,12 @@ Proprietary game assets, replay payloads, local configuration and credentials ar
 Independent community project. Not affiliated with the Age of Empires developers or publisher.
 
 New-engine reports add structured `engine_error` diagnostics alongside legacy outcome/reason fields: kind, execution phase, repository-relative source location, ordered context entries and an optional cause. The recording table can filter by kind and expand details with links pinned to the measured engine commit. Legacy snapshots remain readable without invented context. Stopping summaries and versioned engine JSON distinguish kind plus fixed reason; compact version responses retain reason IDs and kinds while full occurrence context remains in the canonical `resolution.source_report`. Tick/checkpoint semantics and fixed cohort membership stay unchanged. Supplementary matching-build data tables are frozen and hashed with the original inputs, and input/adapter differences are disclosed in comparisons.
+
+
+### Links to a single progression or regression
+
+Construct `?engine=<commit>&match=<match-id>#changes` to open a particular change. Engine commits accept an unambiguous 8–40 character hexadecimal hash; a completed release measurement is preferred when that revision has several runs. For an exact testing attempt, use `?run=<run-id>&match=<match-id>#changes` instead. `cohort=core500`, `extension500`, or `combined1000` is optional; a linked change defaults to the combined baseline (or full corpus on legacy runs).
+
+Example: [regression for replay 429361673 on engine 50269825192e](https://cmsautter.github.io/genie-progress/?engine=50269825192e&match=429361673#changes). The link isolates and highlights the change, expands progress/stopping details and scrolls to it. Clear the existing change-search field to show all changes again. No permalink buttons or links are added to the dashboard.
+
+The `match` value also accepts an `.aoe2record` filename containing the match ID, such as `Match_429361673.aoe2record`, or a known TTL recording name. URL-encode filename characters. Arbitrary filenames without a published identifier cannot be resolved. Missing/ambiguous snapshots, filenames, changes, or cohort membership are reported rather than substituting another result. Links require the corresponding snapshot to remain in retained published history.

@@ -40,6 +40,10 @@ const pageQuery=new URLSearchParams(globalThis.location?.search||'');
 const requestedScope=pageQuery.get('cohort');
 if((trendPage?cohortScopes:corpusScopes).includes(requestedScope)){mode=requestedScope;modeChosen=true;}
 const requestedRun=pageQuery.get('run');
+const requestedEngine=pageQuery.get('engine');
+let snapshotQueryPending=!trendPage&&!!(requestedRun||requestedEngine);
+let linkedMatch=!trendPage&&snapshotQueryPending?(pageQuery.get('match')||''):'';
+let linkedChangeScrolled=false;
 if(!trendPage&&/^[A-Za-z0-9_-]+$/.test(requestedRun||'')){selected=requestedRun;followLatest=false;}
 const inScope=(row,scope=mode)=>scope==='growing'||(scope==='fixed'?!!row.fixed:row.cohorts?.includes(scope));
 let manifestRequest=0, detailsReady=false, detailsLoading=false, detailsError='', pendingKey='', detailsController;
@@ -253,6 +257,22 @@ function detailsVersion(r){
   const changing=['running','queued','building'].includes(r.status);
   return [r.id,r.status,r.finished||'',r.fixed.finished,r.growing.finished,changing?manifest.generated:''].join('|');
 }
+function querySnapshot(runs){
+  if(requestedEngine&&!/^[a-f0-9]{8,40}$/i.test(requestedEngine))throw Error('Use an engine commit hash with 8 to 40 hexadecimal characters.');
+  if(requestedRun){
+    const exact=runs.find(r=>r.id===requestedRun);
+    if(exact){
+      if(requestedEngine&&!exact.sha.toLowerCase().startsWith(requestedEngine.toLowerCase()))throw Error('The requested run and engine commit do not match.');
+      return exact;
+    }
+  }
+  const revision=requestedEngine||requestedRun;
+  if(!/^[a-f0-9]{8,40}$/i.test(revision||''))throw Error('The requested engine snapshot is not retained or the commit is invalid.');
+  const candidates=runs.filter(r=>!r.pilot&&r.status!=='continued'&&r.sha.toLowerCase().startsWith(revision.toLowerCase()));
+  if(new Set(candidates.map(r=>r.sha)).size>1)throw Error('The engine commit prefix is ambiguous. Use a longer commit hash.');
+  if(!candidates.length)throw Error('No retained engine snapshot matches '+revision+'.');
+  return candidates.sort((a,b)=>Number(b.status==='complete')-Number(a.status==='complete')||Number(b.build_profile==='release')-Number(a.build_profile==='release')||Date.parse(b.created)-Date.parse(a.created))[0];
+}
 async function refresh(){
   const current=++manifestRequest;
   try {
@@ -271,6 +291,11 @@ async function refresh(){
     $('health').textContent=age<180000?'Worker reporting':age<7200000?'Report updated '+Math.round(age/60000)+'m ago':'Worker report stale';$('health').className='health '+(age<180000?'alive':age>=7200000?'stale':'');
     if(trendPage){renderTrendPage();return;}
     $('reference-count').textContent=fmt(manifest.reference_count);$('catalog-count').textContent=fmt(manifest.catalog_count);
+    if(snapshotQueryPending){
+      const run=querySnapshot(manifest.runs);selected=run.id;followLatest=false;snapshotQueryPending=false;
+      if(linkedMatch&&!modeChosen){mode=run.combined1000?'combined1000':'growing';modeChosen=true;}
+    }
+    if(selected&&!followLatest&&!manifest.runs.some(r=>r.id===selected))throw Error('The selected engine snapshot is no longer retained.');
     const runs=visibleRuns(manifest.runs);
     renderArchive(manifest.runs,runs);
     if(!runs.length)throw Error('No benchmark runs have been exported yet.');
@@ -316,6 +341,7 @@ async function loadDetails(run){
 }
 function selectSnapshot(id){
   const run=manifest.runs.find(r=>r.id===id);if(!run)return;
+  if(selected!==id){linkedMatch='';linkedChangeScrolled=false;}
   followLatest=false;selected=id;page=0;syncSelector(visibleRuns(manifest.runs),true);return loadDetails(run);
 }
 function render(){
@@ -449,6 +475,15 @@ function changeStop(stop){
   if(!extra.length)detail.append(el('p',stop.status==='complete'?'Playback reached the end; checkpoint counts are shown separately.':'No additional stopping diagnostics were recorded.','change-reason'));
   cell.append(detail);return cell;
 }
+function linkedRecording(row,query){
+  const basename=query.split(/[\\/]/).pop().replace(/\.aoe2record(?:\.gz)?$/i,'');
+  return [row.match_id,row.before.match_id].some(id=>{
+    if(id===query||id===basename)return true;
+    if(/^\d+$/.test(id))return new RegExp('(?:^|\\D)'+id+'(?:\\D|$)').test(basename);
+    const ttl=/^ttl:(.*):[0-9a-f]{12}$/.exec(id);
+    return ttl&&ttl[1].replaceAll('_',' ').toLowerCase()===basename.replaceAll('_',' ').toLowerCase();
+  });
+}
 function renderReplayChanges(){
   if(data)renderChangeMetric(data.run);
   const value=replayChanges?.run.id===selected?replayChanges:undefined,s=value?.[mode];
@@ -468,11 +503,20 @@ function renderReplayChanges(){
   if(term)rows=rows.filter(r=>JSON.stringify([r.match_id,r.before.match_id,r.before.stop,r.after.stop]).toLowerCase().includes(term));
   const metric=r=>sort==='ticks-now'?(r.after.completed_ticks??-Infinity):sort==='ticks-gain'?(r.ticks_delta??-Infinity):sort==='ticks-loss'?-(r.ticks_delta??Infinity):sort==='checkpoints-gain'?(r.checkpoints_delta??-Infinity):sort==='checkpoints-loss'?-(r.checkpoints_delta??Infinity):Math.abs(r.ticks_delta||0);
   rows.sort((a,b)=>(sort==='id'?0:metric(b)-metric(a))||a.match_id.localeCompare(b.match_id));
+  let linked,linkMessage='';
+  if(linkedMatch){
+    const matches=value.rows.filter(r=>linkedRecording(r,linkedMatch));
+    linked=matches.length===1&&inScope(matches[0])?matches[0]:undefined;
+    linkMessage=matches.length>1?'The filename matches multiple recordings. Use an exact match ID.':matches.length===1&&!linked?'The linked recording is outside this cohort.':!linked?'No compared change found for '+linkedMatch+' in this snapshot.':'';
+    rows=linked?[linked]:[];changesPage=0;
+    if(linked)$('changes-search').value=linked.match_id;
+  }
   const pages=Math.max(1,Math.ceil(rows.length/25));changesPage=Math.max(0,Math.min(changesPage,pages-1));
   const labels={advanced:'Advanced',regressed:'Regressed',mixed:'Mixed',changed:'Other change',measurement:'Length metadata changed'};
   $('changes-rows').replaceChildren();
   for(const row of rows.slice(changesPage*25,(changesPage+1)*25)){
     const tr=el('tr'),match=el('td');match.append(recordingLink(row));match.title='SHA256 '+row.sha256;
+    if(linked){tr.setAttribute('data-linked-change','true');tr.setAttribute('tabindex','-1');}
     if(row.before.match_id!==row.match_id)match.append(el('small','Previously '+row.before.match_id));
     const kind=el('td');kind.append(el('span',labels[row.kind],'change-kind '+row.kind));
     if(row.new_eof||row.lost_eof)kind.append(el('small',row.new_eof?'New EOF':'Lost EOF'));
@@ -484,10 +528,16 @@ function renderReplayChanges(){
     const details=[];
     for(const [key,label] of [['first_failure_tick','Failure tick'],['last_matching_checkpoint_tick','Last matching checkpoint tick'],['ignored_commands_to_stop','Ignored commands'],['total_ticks','Recording ticks'],['total_checkpoints','Recorded checkpoints']])
       if(row.fields_changed.includes(key))details.push(label+': '+fmt(row.before[key])+' → '+fmt(row.after[key]));
-    if(details.length){const extra=el('details',undefined,'change-extra');extra.append(el('summary','Progress details'));for(const line of details)extra.append(el('p',line));kind.append(extra);}
-    tr.append(match,kind,ticks,checkpoints,changeStop(row.before.stop),changeStop(row.after.stop));$('changes-rows').append(tr);
+    if(details.length){const extra=el('details',undefined,'change-extra');extra.open=!!linked;extra.append(el('summary','Progress details'));for(const line of details)extra.append(el('p',line));kind.append(extra);}
+    const before=changeStop(row.before.stop),after=changeStop(row.after.stop);
+    if(linked){before.children[0].open=true;after.children[0].open=true;}
+    tr.append(match,kind,ticks,checkpoints,before,after);$('changes-rows').append(tr);
+    if(linked&&!linkedChangeScrolled){
+      const query=linkedMatch,focus=()=>{if(tr.isConnected===false||selected!==value.run.id||linkedMatch!==query)return;tr.scrollIntoView?.({block:'center'});tr.focus?.({preventScroll:true});linkedChangeScrolled=true;};
+      if(globalThis.requestAnimationFrame)globalThis.requestAnimationFrame(focus);else focus();
+    }
   }
-  $('changes-row-count').textContent=fmt(rows.length)+' changed recordings'+(!rows.length?' · no changes for this selection':'');
+  $('changes-row-count').textContent=linkMessage||(linked?'Linked recording '+linked.match_id+' · clear the search to show all changes':fmt(rows.length)+' changed recordings'+(!rows.length?' · no changes for this selection':''));
   $('changes-page').textContent=(changesPage+1)+' / '+pages;$('changes-previous').disabled=changesPage===0;$('changes-next').disabled=changesPage===pages-1;
 }
 async function loadCommandCoverage(run){
@@ -844,7 +894,7 @@ $('chart-outcome').onblur=()=>{if(data&&chartSelectorKey!==JSON.stringify(histog
 $('command-standard').onchange=event=>{commandStandard=event.currentTarget.value;renderCommandCoverage();};
 $('command-filter').onchange=()=>{commandShowAll=false;renderCommandCoverage();};
 $('command-show-all').onclick=()=>{commandShowAll=!commandShowAll;renderCommandCoverage();};
-for(const id of ['changes-search','changes-filter','changes-sort'])$(id).addEventListener('input',()=>{changesPage=0;renderReplayChanges();});
+for(const id of ['changes-search','changes-filter','changes-sort'])$(id).addEventListener('input',()=>{linkedMatch='';linkedChangeScrolled=false;changesPage=0;renderReplayChanges();});
 $('changes-previous').onclick=()=>{changesPage--;renderReplayChanges();};
 $('changes-next').onclick=()=>{changesPage++;renderReplayChanges();};
 loadCheckpointDefinitions();
