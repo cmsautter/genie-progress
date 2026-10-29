@@ -7,7 +7,7 @@ const {createHash,webcrypto}=require('node:crypto');
 
 // A small DOM fixture exercises the shipped app's async behavior, without a browser.
 class Element{
-  constructor(tag='div'){this.tag=tag;this.children=[];this._text='';this._value='';this.hidden=false;this.disabled=false;this.replacements=0;this.style={setProperty(){}};this.classList={toggle(){}};}
+  constructor(tag='div'){this.tag=tag;this.tagName=tag.toUpperCase();this.children=[];this._text='';this._value='';this.hidden=false;this.disabled=false;this.replacements=0;this.style={setProperty(){}};this.classList={toggle(){}};}
   set textContent(value){this._text=String(value);this.children=[];}
   get textContent(){return this._text+this.children.map(c=>typeof c==='string'?c:c.textContent).join('');}
   append(...items){this.children.push(...items);if(this.tag==='select'&&!this._value)this._value=this.options[0]?.value||'';}
@@ -426,7 +426,7 @@ test('structured errors expose pinned source and repeated context and filter by 
   const detail=a.$('rows').children[0].children[7];
   assert.match(detail.textContent,/Engine invariant.*update.*object: 12.*object: 34/);
   const all=node=>[node,...(node.children||[]).flatMap(all)];
-  const link=all(detail).find(n=>n.tag==='a');
+  const link=all(detail).find(n=>n.tag==='a'&&n.href.startsWith('https://github.com/'));
   assert.equal(link.href,'https://github.com/librematch/genie/blob/'+active.sha+'/crates/engine/genie-core/src/turn/unit.rs#L347');
   a.$('engine-kind-filter').value='unreachable';a.$('engine-kind-filter').onchange();
   assert.match(a.$('row-count').textContent,/1 matching recording/);
@@ -438,7 +438,7 @@ test('structured error source links reject paths outside the engine repository',
   a.resolve('active',value);await settle();
   const detail=a.$('rows').children[0].children[7];
   const all=node=>[node,...(node.children||[]).flatMap(all)];
-  assert.ok(!all(detail).some(n=>n.tag==='a'));
+  assert.ok(!all(detail).some(n=>n.tag==='a'&&n.href.startsWith('https://github.com/')));
   assert.match(detail.textContent,/Invalid input.*parse/);
 });
 
@@ -449,7 +449,7 @@ test('locally injected adapter sites do not link to nonexistent upstream source'
   const detail=a.$('rows').children[0].children[7];
   assert.match(detail.textContent,/Benchmark adapter at/);
   const all=node=>[node,...(node.children||[]).flatMap(all)];
-  assert.ok(!all(detail).some(n=>n.tag==='a'));
+  assert.ok(!all(detail).some(n=>n.tag==='a'&&n.href.startsWith('https://github.com/')));
 });
 
 test('handler-presence mode explicitly includes partial handlers and gap filters stay distinct',async()=>{
@@ -1218,7 +1218,7 @@ test('trend legends distinguish outcome colors from the median line',async()=>{
   assert.equal(swatch.style.background,'var(--link)');assert.equal(swatch.className,'legend-line');
 });
 
-test('engine-and-match URL opens the exact change without adding visible permalink controls',async()=>{
+test('engine-and-match URL opens the exact change with permalinks inside its expanded details',async()=>{
   const value=replayChanges(active);value.rows[1].fields_changed.push('first_failure_tick');
   const a=await app(manifest(),{search:'?engine='+active.sha.slice(0,12)+'&match=2',changes:{active:value}});
   assert.equal(a.$('run-select').value,active.id);
@@ -1278,4 +1278,38 @@ test('linked changes default to the combined cohort and respect an explicitly na
   assert.equal(a.$('combined1000')['aria-pressed'],true);assert.equal(a.$('changes-rows').children.length,1);
   const core=await app(m,{search:'?engine='+r.sha+'&cohort=core500&match=2',changes:{[r.id]:value}});
   assert.equal(core.$('changes-rows').children.length,0);assert.match(core.$('changes-row-count').textContent,/outside this cohort/);
+});
+
+test('comparison detail icons pin the exact run engine cohort and replay',async()=>{
+  const value=replayChanges(active);value.rows[1].fields_changed.push('first_failure_tick');
+  const a=await app(manifest(),{search:'?run=active&cohort=fixed&match=2',changes:{active:value}});
+  const row=a.$('changes-rows').children[0];
+  for(const detail of [row.children[1].children.find(n=>n.tag==='details'),row.children[4].children[0],row.children[5].children[0]]){
+    const link=detail.children.find(n=>n.className==='detail-permalink');assert.ok(link);assert.equal(detail.open,true);
+    const [query,hash]=link.href.split('?')[1].split('#'),params=new URLSearchParams(query);
+    assert.equal(params.get('run'),active.id);assert.equal(params.get('engine'),active.sha);assert.equal(params.get('cohort'),'fixed');assert.equal(params.get('match'),'2');assert.equal(hash,'changes');
+    assert.match(link['aria-label'],/Permalink.*2/);assert.equal(link.children[0].tag,'svg');assert.equal(link.children[0]['aria-hidden'],'true');
+  }
+});
+
+test('recording permalinks open checkpoint diagnostics even without a comparison change',async()=>{
+  const value=payload(active);value.rows=[{...value.rows[0],status:'checkpoint_mismatch',differences:[]},{...value.rows[0],match_id:'201'}];
+  const a=await app(manifest(),{search:'?run=active&engine='+active.sha+'&match=200&view=recording'});
+  a.resolve('active',value);await settle();
+  const row=a.$('rows').children[0];assert.equal(a.$('rows').children.length,1);assert.equal(row['data-linked-recording'],'true');
+  const detail=row.children[7].children[0];assert.equal(detail.open,true);
+  const link=detail.children.find(n=>n.className==='detail-permalink');assert.ok(link);assert.match(link.href,/view=recording#recordings$/);assert.match(link.href,/match=200/);
+  assert.equal(a.$('search').value,'200');assert.match(a.$('row-count').textContent,/Linked recording 200/);
+  a.$('search').value='';a.$('search').oninput();assert.equal(a.$('rows').children.length,2);assert.equal(a.$('rows').children[0]['data-linked-recording'],undefined);
+});
+
+test('recording links use the combined cohort by default and report missing or excluded recordings',async()=>{
+  const r=trendRun('recordings');delete r.changes;const m=trendManifest([r]),value=payload(r);
+  value.rows[0].cohorts=['extension500','combined1000'];
+  for(const [suffix,expected] of [['','Linked recording'],['&cohort=core500','outside this cohort'],['&match=999','No recording found']]){
+    const a=await app(m,{search:'?run='+r.id+'&view=recording'+(suffix==='&match=999'?suffix:'&match=200'+suffix)});
+    a.resolve(r.id,value);await settle();assert.ok(a.$('row-count').textContent.includes(expected));
+    if(!suffix)assert.equal(a.$('combined1000')['aria-pressed'],true);
+    else assert.equal(a.$('rows').children.length,0);
+  }
 });

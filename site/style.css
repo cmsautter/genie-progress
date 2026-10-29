@@ -55,3 +55,6 @@
 .chart-legend{margin:12px 0 16px;gap:8px 20px;color:var(--text-2);line-height:1.5}.chart-legend span{min-width:0;max-width:100%;align-items:baseline}.chart-legend i{flex-shrink:0;align-self:center;width:11px;height:11px;box-shadow:0 0 0 1px var(--line)}.chart-legend .legend-line{width:22px;height:3px;border-radius:0;box-shadow:none}
 
 .changes-table tr[data-linked-change]>td{background:color-mix(in srgb,var(--link) 8%,transparent)}.changes-table tr[data-linked-change]{scroll-margin:24px}.changes-table tr[data-linked-change]:focus{outline:2px solid var(--teal);outline-offset:2px}
+
+.detail-permalink{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;margin:7px 0 2px;border:1px solid var(--line);border-radius:6px;color:var(--link);vertical-align:middle}.detail-permalink:hover{background:color-mix(in srgb,var(--link) 12%,transparent)}.detail-permalink:focus-visible{outline:2px solid var(--teal);outline-offset:2px}.detail-permalink svg{flex:none}details:not([open])>.detail-permalink{display:none}
+.recordings-table tr[data-linked-recording]>td{background:color-mix(in srgb,var(--link) 8%,transparent)}.recordings-table tr[data-linked-recording]{scroll-margin:24px}.recordings-table tr[data-linked-recording]:focus{outline:2px solid var(--teal);outline-offset:2px}

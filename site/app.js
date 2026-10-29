@@ -42,8 +42,11 @@ if((trendPage?cohortScopes:corpusScopes).includes(requestedScope)){mode=requeste
 const requestedRun=pageQuery.get('run');
 const requestedEngine=pageQuery.get('engine');
 let snapshotQueryPending=!trendPage&&!!(requestedRun||requestedEngine);
-let linkedMatch=!trendPage&&snapshotQueryPending?(pageQuery.get('match')||''):'';
+const recordingView=pageQuery.get('view')==='recording';
+let linkedMatch=!trendPage&&snapshotQueryPending&&!recordingView?(pageQuery.get('match')||''):'';
+let linkedReplay=!trendPage&&snapshotQueryPending&&recordingView?(pageQuery.get('match')||''):'';
 let linkedChangeScrolled=false;
+let linkedReplayScrolled=false;
 if(!trendPage&&/^[A-Za-z0-9_-]+$/.test(requestedRun||'')){selected=requestedRun;followLatest=false;}
 const inScope=(row,scope=mode)=>scope==='growing'||(scope==='fixed'?!!row.fixed:row.cohorts?.includes(scope));
 let manifestRequest=0, detailsReady=false, detailsLoading=false, detailsError='', pendingKey='', detailsController;
@@ -132,6 +135,17 @@ async function reportSHA256(raw){
   throw Error('This browser cannot verify report versions.');
 }
 function el(tag, text, cls){const n=document.createElement(tag);if(text!==undefined)n.textContent=text;if(cls)n.className=cls;return n;}
+function detailPermalink(row,view,run){
+  const link=el('a',undefined,'detail-permalink');
+  const query=new URLSearchParams({run:run.id,engine:run.sha,cohort:mode,match:row.match_id});
+  if(view==='recording')query.set('view','recording');
+  link.href='index.html?'+query+'#'+(view==='recording'?'recordings':'changes');
+  link.title='Permalink to this replay in '+(view==='recording'?'recording results':'snapshot changes');
+  link.setAttribute('aria-label',link.title+' ('+row.match_id+')');
+  const ns='http://www.w3.org/2000/svg',svg=document.createElementNS(ns,'svg'),path=document.createElementNS(ns,'path');
+  for(const [key,value] of Object.entries({viewBox:'0 0 24 24',width:16,height:16,fill:'none',stroke:'currentColor','stroke-width':1.8,'stroke-linecap':'round','stroke-linejoin':'round','aria-hidden':'true',focusable:'false'}))svg.setAttribute(key,value);
+  path.setAttribute('d','M10 8l3-3a4 4 0 0 1 6 6l-3 3M14 16l-3 3a4 4 0 0 1-6-6l3-3M9 15l6-6');svg.append(path);link.append(svg);return link;
+}
 async function loadCheckpointDefinitions(){
   try{
     const response=await fetch('checkpoint-checks.json',{cache:'no-cache'});
@@ -158,6 +172,7 @@ function checkpointDetails(row){
   details.open=openMismatches.has(key);
   details.addEventListener('toggle',()=>{if(details.open)openMismatches.add(key);else openMismatches.delete(key);});
   details.append(el('summary',checkpointReason(row)));
+  details.append(detailPermalink(row,'recording',data.run));
   details.append(el('p',row.checkpoints_passed?'Last matching checkpoint: update '+fmt(row.last_matching_checkpoint_tick)+'.':'No earlier recorded checkpoint matched.','chart-note'));
   details.append(el('p','These are aggregate checks. They identify the differing category, not a particular object or the update where divergence began. Sums wrap at 32 bits.','chart-note'));
   if(row.differences?.length){
@@ -293,7 +308,7 @@ async function refresh(){
     $('reference-count').textContent=fmt(manifest.reference_count);$('catalog-count').textContent=fmt(manifest.catalog_count);
     if(snapshotQueryPending){
       const run=querySnapshot(manifest.runs);selected=run.id;followLatest=false;snapshotQueryPending=false;
-      if(linkedMatch&&!modeChosen){mode=run.combined1000?'combined1000':'growing';modeChosen=true;}
+      if((linkedMatch||linkedReplay)&&!modeChosen){mode=run.combined1000?'combined1000':'growing';modeChosen=true;}
     }
     if(selected&&!followLatest&&!manifest.runs.some(r=>r.id===selected))throw Error('The selected engine snapshot is no longer retained.');
     const runs=visibleRuns(manifest.runs);
@@ -341,7 +356,7 @@ async function loadDetails(run){
 }
 function selectSnapshot(id){
   const run=manifest.runs.find(r=>r.id===id);if(!run)return;
-  if(selected!==id){linkedMatch='';linkedChangeScrolled=false;}
+  if(selected!==id){linkedMatch='';linkedChangeScrolled=false;linkedReplay='';linkedReplayScrolled=false;}
   followLatest=false;selected=id;page=0;syncSelector(visibleRuns(manifest.runs),true);return loadDetails(run);
 }
 function render(){
@@ -467,17 +482,18 @@ async function loadReplayChanges(run){
   finally{if(current===changesRequest){changesLoading=false;changesPendingKey='';renderReplayChanges();}}
 }
 function signed(n){return n===null||n===undefined?'—':(n>0?'+':'')+fmt(n);}
-function changeStop(stop){
+function changeStop(stop,row,run){
   const cell=el('td'),detail=el('details'),extra=[...stop.checks.map(c=>c.label),...stop.reasons];
   const title=stop.label+(extra.length?' · '+extra[0]:'')+(extra.length>1?' (+'+(extra.length-1)+' more)':'');
   detail.append(el('summary',title));
+  detail.append(detailPermalink(row,'changes',run));
   for(const text of extra)detail.append(el('p',text,'change-reason'));
   if(!extra.length)detail.append(el('p',stop.status==='complete'?'Playback reached the end; checkpoint counts are shown separately.':'No additional stopping diagnostics were recorded.','change-reason'));
   cell.append(detail);return cell;
 }
 function linkedRecording(row,query){
   const basename=query.split(/[\\/]/).pop().replace(/\.aoe2record(?:\.gz)?$/i,'');
-  return [row.match_id,row.before.match_id].some(id=>{
+  return [row.match_id,row.before?.match_id].filter(id=>typeof id==='string').some(id=>{
     if(id===query||id===basename)return true;
     if(/^\d+$/.test(id))return new RegExp('(?:^|\\D)'+id+'(?:\\D|$)').test(basename);
     const ttl=/^ttl:(.*):[0-9a-f]{12}$/.exec(id);
@@ -528,8 +544,8 @@ function renderReplayChanges(){
     const details=[];
     for(const [key,label] of [['first_failure_tick','Failure tick'],['last_matching_checkpoint_tick','Last matching checkpoint tick'],['ignored_commands_to_stop','Ignored commands'],['total_ticks','Recording ticks'],['total_checkpoints','Recorded checkpoints']])
       if(row.fields_changed.includes(key))details.push(label+': '+fmt(row.before[key])+' → '+fmt(row.after[key]));
-    if(details.length){const extra=el('details',undefined,'change-extra');extra.open=!!linked;extra.append(el('summary','Progress details'));for(const line of details)extra.append(el('p',line));kind.append(extra);}
-    const before=changeStop(row.before.stop),after=changeStop(row.after.stop);
+    if(details.length){const extra=el('details',undefined,'change-extra');extra.open=!!linked;extra.append(el('summary','Progress details'),detailPermalink(row,'changes',value.run));for(const line of details)extra.append(el('p',line));kind.append(extra);}
+    const before=changeStop(row.before.stop,row,value.run),after=changeStop(row.after.stop,row,value.run);
     if(linked){before.children[0].open=true;after.children[0].open=true;}
     tr.append(match,kind,ticks,checkpoints,before,after);$('changes-rows').append(tr);
     if(linked&&!linkedChangeScrolled){
@@ -818,9 +834,18 @@ function renderTable(){
     }
     return order||a.match_id.localeCompare(b.match_id);
   });
+  let linked,linkMessage='';
+  if(linkedReplay){
+    const matches=data.rows.filter(r=>linkedRecording(r,linkedReplay));
+    linked=matches.length===1&&inScope(matches[0])?matches[0]:undefined;
+    linkMessage=matches.length>1?'The filename matches multiple recordings. Use an exact match ID.':matches.length===1&&!linked?'The linked recording is outside this cohort.':!linked?'No recording found for '+linkedReplay+' in this snapshot.':'';
+    rows=linked?[linked]:[];page=0;
+    if(linked)$('search').value=linked.match_id;
+  }
   const pages=Math.max(1,Math.ceil(rows.length/30));page=Math.max(0,Math.min(page,pages-1));$('rows').replaceChildren();
   for(const r of rows.slice(page*30,(page+1)*30)){
     const tr=el('tr'),first=el('td');first.append(recordingLink(r));
+    if(linked){tr.setAttribute('data-linked-recording','true');tr.setAttribute('tabindex','-1');}
     const status=el('td'),badge=el('span',names[outcome(r)]||r.status,'badge');badge.style.setProperty('--badge',color(outcome(r)));status.append(badge);
     const ticks=el('td',r.total_ticks===undefined?'—':fmt(r.completed_ticks||0)+' / '+fmt(r.total_ticks)),percent=el('td');
     const meter=el('span',progress(r)<0?'—':progress(r).toFixed(2)+'%','micro-progress');meter.style.setProperty('--percent',Math.max(0,progress(r))+'%');meter.style.setProperty('--badge',color(outcome(r)));percent.append(meter);
@@ -838,16 +863,21 @@ function renderTable(){
       let reason=r.unsupported?.map(v=>v.reason).join('; ')||r.reason||'';
       if(r.status==='complete')reason=r.checkpoints_passed?'All usable recorded checkpoints matched.':'No usable recorded checkpoints.';
       if(r.ignored_commands_to_stop)reason+=' '+fmt(r.ignored_commands_to_stop)+' ignored command packets.';
-      if(engineErrors(r).length)diagnostic.append(engineErrorDetails(r,reason,data.run.sha));
+      if(engineErrors(r).length)diagnostic.append(engineErrorDetails(r,reason,data.run));
       else {
         diagnostic.textContent=reason;
         if(r.status==='timeout'&&r.timeout_kind==='simulation_step')
           diagnostic.append(el('p','Update '+fmt(r.step_tick)+' exceeded '+fmt(r.step_limit_seconds)+'s. '+fmt(r.completed_ticks)+' completed updates retained.','change-reason'));
       }
     }
+    if(linked)for(const child of diagnostic.children)if(child.tagName==='DETAILS')child.open=true;
     tr.append(first,status,ticks,percent,checkpoint,runtime,speed,diagnostic);$('rows').append(tr);
+    if(linked&&!linkedReplayScrolled){
+      const query=linkedReplay,runId=data.run.id,focus=()=>{if(tr.isConnected===false||selected!==runId||linkedReplay!==query)return;tr.scrollIntoView?.({block:'center'});tr.focus?.({preventScroll:true});linkedReplayScrolled=true;};
+      if(globalThis.requestAnimationFrame)globalThis.requestAnimationFrame(focus);else focus();
+    }
   }
-  $('row-count').textContent=fmt(rows.length)+' matching recordings';$('page-number').textContent=(page+1)+' / '+pages;$('previous').disabled=page===0;$('next').disabled=page===pages-1;
+  $('row-count').textContent=linkMessage||(linked?'Linked recording '+linked.match_id+' · clear the search to show all recordings':fmt(rows.length)+' matching recordings');$('page-number').textContent=(page+1)+' / '+pages;$('previous').disabled=page===0;$('next').disabled=page===pages-1;
 }
 const engineKindNames={unsupported:'Unsupported mechanic',unreachable:'Engine invariant',missing_data:'Missing data',invalid_input:'Invalid input',io:'I/O failure'};
 function engineErrors(row){
@@ -855,8 +885,10 @@ function engineErrors(row){
   if(row.engine_error)items.push(row);
   return items.filter(item=>item.engine_error?.schema===2);
 }
-function engineErrorDetails(row,reason,sha){
+function engineErrorDetails(row,reason,run){
   const detail=el('details',undefined,'checkpoint-details');detail.append(el('summary',reason));
+  detail.append(detailPermalink(row,'recording',run));
+  const sha=run.sha;
   const seen=new Set();
   for(const item of engineErrors(row)){
     const error=item.engine_error,key=JSON.stringify([item.reason,error]);if(seen.has(key))continue;seen.add(key);
@@ -880,11 +912,11 @@ if(trendPage){
   for(const scope of cohortScopes)$(scope).onclick=()=>{mode=scope;modeChosen=true;renderTrendPage();try{globalThis.history?.replaceState(null,'',trendURL());}catch{}};
 }else{
 for(const key of corpusScopes)$(key).onclick=()=>{mode=key;modeChosen=true;page=0;changesPage=0;render();};
-$('engine-kind-filter').onchange=()=>{page=0;renderTable();};
+$('engine-kind-filter').onchange=()=>{linkedReplay='';linkedReplayScrolled=false;page=0;renderTable();};
 $('run-select').onchange=event=>{const pending=selectSnapshot(event.currentTarget.value);if(pending)pending.catch(showLoadError);};
 $('run-select').onblur=()=>{if(manifest)syncSelector(visibleRuns(manifest.runs),true);};
 $('retry-details').onclick=()=>{detailsCache.delete(selected);loadDetails(manifest.runs.find(r=>r.id===selected)).catch(showLoadError);};
-for(const id of ['search','status-filter','sort'])$(id).addEventListener('input',()=>{page=0;renderTable();});
+for(const id of ['search','status-filter','sort'])$(id).addEventListener('input',()=>{linkedReplay='';linkedReplayScrolled=false;page=0;renderTable();});
 $('previous').onclick=()=>{page--;renderTable();};$('next').onclick=()=>{page++;renderTable();};
 $('provenance').onclick=()=>$('method').showModal();$('close-method').onclick=()=>$('method').close();
 $('chart-scale').onchange=event=>{chartScale=event.currentTarget.value;if(data)renderCharts(data.run[mode]);};
