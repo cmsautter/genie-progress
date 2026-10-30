@@ -1313,3 +1313,70 @@ test('recording links use the combined cohort by default and report missing or e
     else assert.equal(a.$('rows').children.length,0);
   }
 });
+
+test('verified checkpoint total sums passed checks for every outcome and ignores table filters',async()=>{
+  const a=await app();assert.equal(a.$('checkpoints-verified').textContent,'—');
+  const value=payload(active);value.rows=[
+    {match_id:'1',fixed:true,status:'checkpoint_mismatch',checkpoints_passed:22,last_matching_checkpoint_tick:10999,completed_ticks:11499,total_ticks:20000},
+    {match_id:'2',fixed:true,status:'unsupported',checkpoints_passed:43,completed_ticks:21749,total_ticks:30000},
+    {match_id:'3',fixed:true,status:'complete',checkpoints_passed:10,total_ticks:5000},
+    {match_id:'4',fixed:true,status:'timeout',checkpoints_passed:0,total_ticks:10000},
+    {match_id:'5',fixed:true,status:'parse_error'},
+    {match_id:'6',fixed:false,status:'unsupported',checkpoints_passed:1000}
+  ];a.resolve('active',value);await settle();
+  assert.equal(a.$('checkpoints-verified').textContent,'75');assert.match(a.$('checkpoints-verified-sub').textContent,/5 measured replays.*1 without usable counters/);
+  a.$('search').value='1';a.$('search').oninput();assert.equal(a.$('checkpoints-verified').textContent,'75');
+  a.$('growing').onclick();assert.equal(a.$('checkpoints-verified').textContent,'1,075');
+});
+
+test('verified checkpoint total scopes frozen cohorts and rejects absent or invalid counters',async()=>{
+  const r=trendRun('checks'),a=await app(trendManifest([r])),value=payload(r);
+  value.rows=[{match_id:'1',status:'unsupported',cohorts:['core500','combined1000'],checkpoints_passed:11},
+    {match_id:'2',status:'timeout',cohorts:['extension500','combined1000'],checkpoints_passed:7},
+    ...[undefined,null,-1,2.5,'5'].map((n,i)=>({match_id:String(i+3),status:'parse_error',cohorts:['extension500','combined1000'],checkpoints_passed:n}))];
+  a.resolve(r.id,value);await settle();a.$('core500').onclick();assert.equal(a.$('checkpoints-verified').textContent,'11');
+  a.$('extension500').onclick();assert.equal(a.$('checkpoints-verified').textContent,'7');
+  a.$('combined1000').onclick();assert.equal(a.$('checkpoints-verified').textContent,'18');assert.match(a.$('checkpoints-verified-sub').textContent,/5 without usable counters/);
+});
+
+test('checkpoint totals never carry over between snapshots or invent missing historical counts',async()=>{
+  const a=await app();a.resolve('active',payload(active));await settle();assert.equal(a.$('checkpoints-verified').textContent,'1');
+  await a.choose('baseline');assert.equal(a.$('checkpoints-verified').textContent,'—');
+  const value=payload(baseline);delete value.rows[0].checkpoints_passed;a.resolve('baseline',value);await settle();
+  assert.equal(a.$('checkpoints-verified').textContent,'—');assert.match(a.$('checkpoints-verified-sub').textContent,/No checkpoint counters reported/);
+});
+
+test('checkpoint change shows signed matched deltas including zero without subtracting the whole baseline',async()=>{
+  for(const delta of [123,0,-7]){
+    const changes=replayChanges(active);changes.fixed.checkpoints_delta=delta;changes.fixed.checkpoints_compared_recordings=2;
+    const a=await app(manifest(),{changes:{active:changes}});a.resolve('active',payload(active));await settle();
+    assert.equal(a.$('checkpoints-verified').textContent,'1');assert.equal(a.$('checkpoints-delta').textContent,'('+(delta>=0?'+':'')+delta+')');
+    assert.match(a.$('checkpoints-delta').title,/2 measured replays.*Pending replays are excluded/);
+  }
+});
+
+test('checkpoint change starts at plus zero for no measured pairs and never reuses another snapshot',async()=>{
+  const changes=replayChanges(active);Object.assign(changes.fixed,{checkpoints_delta:0,checkpoints_compared_recordings:0});
+  const a=await app(manifest(),{changes:{active:changes}});const empty=payload(active);empty.rows=[];a.resolve('active',empty);await settle();
+  assert.equal(a.$('checkpoints-delta').textContent,'(+0)');assert.equal(a.$('checkpoints-verified').textContent,'0');
+  await a.choose('baseline');assert.equal(a.$('checkpoints-delta').textContent,'');
+});
+
+test('checkpoint change follows cohort and waits for current comparison data',async()=>{
+  const r=trendRun('cpdelta');delete r.changes;const value=replayChanges(r);value.growing.total_recordings=r.growing.total;
+  for(const [scope,delta] of [['core500',3],['extension500',-2],['combined1000',1]])value[scope]={...value.fixed,total_recordings:r[scope].total,checkpoints_delta:delta,checkpoints_compared_recordings:5};
+  const a=await app(trendManifest([r]),{changes:{[r.id]:value}});a.resolve(r.id,payload(r));await settle();
+  for(const [scope,text] of [['core500','(+3)'],['extension500','(-2)'],['combined1000','(+1)']]){a.$(scope).onclick();assert.equal(a.$('checkpoints-delta').textContent,text);}
+});
+
+test('checkpoint trend uses published cohort totals and leaves unknown revisions as gaps',async()=>{
+  const runs=[trendRun('old'),trendRun('missing',1),trendRun('new',2)];
+  for(const [i,r] of runs.entries())for(const [scope,n] of [['core500',100],['extension500',200],['combined1000',300]])r[scope].checkpoints={verified:i===1?null:n+i,without_counters:2};
+  const a=await trendApp(trendManifest(runs));
+  const all=node=>[node,...(node.children||[]).flatMap(all)];
+  assert.equal(all(a.$('trend-checkpoints')).filter(n=>n.tag==='circle').length,2);
+  assert.ok(!all(a.$('trend-checkpoints')).some(n=>n.tag==='line'&&n.style==='stroke:var(--teal)'),'missing values break connecting lines');
+  assert.equal(a.$('trend-rows').children[0].children[8].textContent,'102');assert.equal(a.$('trend-rows').children[1].children[8].textContent,'—');
+  a.$('combined1000').onclick();assert.equal(a.$('trend-rows').children[0].children[8].textContent,'302');
+  assert.match(a.$('trend-checkpoints-legend').textContent,/Total checkpoints verified/);assert.equal(a.calls.length,0,'no replay report downloads needed on trends');
+});

@@ -389,6 +389,7 @@ function render(){
   if(retry)$('measured-sub').textContent+=' · initial results; timeout retries still running';
   $('checked').textContent=fmt(s.counts.complete_checked||0);
   $('checked-sub').textContent=fmt(s.counts.complete_unchecked||0)+' end reached without usable checkpoints';
+  renderCheckpointTotal();
   $('median').textContent=s.median_percent===null?'—':s.median_percent.toFixed(s.median_percent<1?3:1)+'%';
   $('median-sub').textContent=fmt(s.median_ticks)+' updates · '+fmt(s.measurable)+' measurable cases';
   renderTiming(r,s);
@@ -418,7 +419,28 @@ function render(){
   const filter=$('status-filter'),keep=filter.value;filter.replaceChildren(new Option('All outcomes','all'));for(const key of Object.keys(s.counts))filter.add(new Option(names[key]||key,key));filter.value=Object.hasOwn(s.counts,keep)?keep:'all';
   renderCheckpointGroups();renderCommandCoverage();renderReplayChanges();renderTable();
 }
+function renderCheckpointTotal(){
+  const total=$('checkpoints-verified'),note=$('checkpoints-verified-sub');
+  total.textContent='—';
+  if(detailsLoading){note.textContent='Loading checkpoint totals…';return;}
+  if(!detailsReady){note.textContent='Checkpoint totals unavailable.';return;}
+  const rows=data.rows.filter(row=>inScope(row));
+  const counted=rows.filter(row=>Number.isSafeInteger(row.checkpoints_passed)&&row.checkpoints_passed>=0);
+  if(counted.length||!rows.length)total.textContent=fmt(counted.reduce((sum,row)=>sum+row.checkpoints_passed,0));
+  note.textContent=!rows.length?'No measured replays yet.':!counted.length?'No checkpoint counters reported.':'Passed checkpoints across '+fmt(rows.length)+' measured replays.';
+  if(counted.length&&counted.length<rows.length)note.textContent+=' '+fmt(rows.length-counted.length)+' without usable counters excluded.';
+}
+function renderCheckpointDelta(run){
+  const node=$('checkpoints-delta');node.textContent='';node.title='';node.className='checkpoint-delta';
+  const value=replayChanges?.run.id===run.id?replayChanges:null,stats=value?.[mode];
+  if(detailsLoading||!detailsReady||changesLoading||changesError||!value?.available||!stats
+      ||!Number.isSafeInteger(stats.checkpoints_delta)||!Number.isSafeInteger(stats.checkpoints_compared_recordings))return;
+  node.textContent='('+ (stats.checkpoints_delta>=0?'+':'')+fmt(stats.checkpoints_delta)+')';
+  node.className+=' '+(stats.checkpoints_delta>0?'positive':stats.checkpoints_delta<0?'negative':'trend-neutral');
+  node.title='Net change across '+fmt(stats.checkpoints_compared_recordings)+' measured replays with checkpoint counts in both snapshots, paired by recording hash, versus '+value.baseline.sha.slice(0,12)+'. Pending replays are excluded.';
+}
 function renderChangeMetric(run){
+  renderCheckpointDelta(run);
   const stats=replayChanges?.run.id===run.id?replayChanges[mode]:null;
   const c=stats?{comparable:stats.compared_recordings||0,improved:stats.advanced||0,regressed:stats.regressed||0}:cohortScopes.includes(mode)||mode==='growing'?null:run.comparison;
   $('advanced').textContent=c?.comparable?'+'+fmt(c.improved):'Baseline';
@@ -698,7 +720,7 @@ function trendComparison(r){
 }
 function trendDescription(r){
   const f=r[mode],c=trendComparison(r);
-  return r.sha+' · '+trendLabels[mode]+' · '+(r.build_profile||'historical')+' · '+date(r.finished||r.created)+' · median '+fmt(f.median_ticks)+' ticks · '+orderedOutcomes(Object.keys(f.counts)).map(k=>(names[k]||k)+': '+fmt(f.counts[k])).join(' · ')+(c?' · advanced '+fmt(c.advanced)+', regressed '+fmt(c.regressed)+' · '+fmt(c.compared_recordings)+' / '+fmt(f.total)+' matched vs '+c.previous_sha.slice(0,8):' · Scoped comparison unavailable');
+  return r.sha+' · '+trendLabels[mode]+' · '+(r.build_profile||'historical')+' · '+date(r.finished||r.created)+' · median '+fmt(f.median_ticks)+' ticks · verified checkpoints '+fmt(f.checkpoints?.verified)+(f.checkpoints?.without_counters?' ('+fmt(f.checkpoints.without_counters)+' results without counters excluded)':'')+' · '+orderedOutcomes(Object.keys(f.counts)).map(k=>(names[k]||k)+': '+fmt(f.counts[k])).join(' · ')+(c?' · advanced '+fmt(c.advanced)+', regressed '+fmt(c.regressed)+' · '+fmt(c.compared_recordings)+' / '+fmt(f.total)+' matched vs '+c.previous_sha.slice(0,8):' · Scoped comparison unavailable');
 }
 function trendDateLabels(runs,L,step){
   const dated=runs.map(r=>new Date(r.finished||r.created)),years=new Set(dated.map(d=>d.getFullYear()));
@@ -717,7 +739,7 @@ function trendDateLabels(runs,L,step){
   return labels;
 }
 function trendColumns(id,runs,draw){
-  const W=Math.max(320,$(id).clientWidth||640),H=252,L=48,R=14,T=20,B=42,plotW=W-L-R,plotH=H-T-B,baseline=T+plotH,step=plotW/runs.length;
+  const W=Math.max(320,$(id).clientWidth||640),H=252,L=id==='trend-checkpoints'?70:48,R=14,T=20,B=42,plotW=W-L-R,plotH=H-T-B,baseline=T+plotH,step=plotW/runs.length;
   const {svg,node}=svgCanvas(W,H),readout=$('trend-readout');
   draw({node,L,T,W,step,plotH,baseline});
   runs.forEach((r,i)=>{
@@ -731,6 +753,22 @@ function trendColumns(id,runs,draw){
   });
   for(const label of trendDateLabels(runs,L,step))node('text',{x:label.x,y:baseline+23,'text-anchor':'middle','class':'trend-date-label'},label.label);
   $(id).replaceChildren(svg);
+}
+function trendLine(id,runs,values,fill){
+  values=values.map(value=>Number.isFinite(value)&&value>=0?value:null);
+  const axis=countAxis(Math.max(0,...values.filter(value=>value!==null)),'linear',170);
+  trendColumns(id,runs,({node,group,i,x,step,L,W,plotH,baseline})=>{
+    const y=value=>baseline-value/axis.upper*plotH;
+    if(!group){
+      for(const tick of axis.ticks){node('line',{x1:L,y1:y(tick),x2:W-14,y2:y(tick),style:'stroke:var(--line-soft)','stroke-dasharray':tick?'3 4':'none'});node('text',{x:L-7,y:y(tick)+3,'text-anchor':'end'},fmt(tick));}
+      values.forEach((value,j)=>{if(j&&value!==null&&values[j-1]!==null)node('line',{x1:L+(j-.5)*step,y1:y(values[j-1]),x2:L+(j+.5)*step,y2:y(value),style:'stroke:'+fill,'stroke-width':2});});
+      if(values.every(value=>value===null))node('text',{x:(L+W-14)/2,y:baseline-plotH/2,'text-anchor':'middle'},id==='trend-checkpoints'?'Checkpoint totals unavailable for this history':'Tick totals unavailable for this history');
+      return;
+    }
+    if(values[i]===null)return;
+    node('circle',{cx:x+step/2,cy:y(values[i]),r:4,style:'fill:'+fill+';stroke:var(--panel)','stroke-width':2},undefined,group);
+    if(i===0||i===runs.length-1)node('text',{x:x+step/2,y:y(values[i])-10,'text-anchor':'middle','class':'trend-value'},fmt(values[i]),group);
+  });
 }
 function renderTrend(){
   const runs=trendRuns();$('trend').hidden=runs.length<2;$('trend-empty').hidden=runs.length>=2;
@@ -750,19 +788,11 @@ function renderTrend(){
       node('rect',{x:x+(step-width)/2,y:top,width,height:Math.max(0,height-1),style:'fill:'+color(key)},undefined,group);
     }
   });
-  const ticks=runs.map(r=>Number.isFinite(r[mode].median_ticks)&&r[mode].median_ticks>=0?r[mode].median_ticks:null),axis=countAxis(Math.max(0,...ticks.filter(v=>v!==null)),'linear',170);
-  trendColumns('trend-ticks',runs,({node,group,i,x,step,L,W,plotH,baseline})=>{
-    const y=v=>baseline-v/axis.upper*plotH;
-    if(!group){
-      for(const tick of axis.ticks){node('line',{x1:L,y1:y(tick),x2:W-14,y2:y(tick),style:'stroke:var(--line-soft)','stroke-dasharray':tick?'3 4':'none'});node('text',{x:L-7,y:y(tick)+3,'text-anchor':'end'},fmt(tick));}
-      ticks.forEach((v,j)=>{if(j&&v!==null&&ticks[j-1]!==null)node('line',{x1:L+(j-.5)*step,y1:y(ticks[j-1]),x2:L+(j+.5)*step,y2:y(v),style:'stroke:var(--link)','stroke-width':2});});return;
-    }
-    if(ticks[i]===null)return;
-    node('circle',{cx:x+step/2,cy:y(ticks[i]),r:4,style:'fill:var(--link);stroke:var(--panel)','stroke-width':2},undefined,group);
-    if(i===0||i===runs.length-1)node('text',{x:x+step/2,y:y(ticks[i])-10,'text-anchor':'middle','class':'trend-value'},fmt(ticks[i]),group);
-  });
+  trendLine('trend-ticks',runs,runs.map(r=>r[mode].median_ticks),'var(--link)');
+  trendLine('trend-checkpoints',runs,runs.map(r=>r[mode].checkpoints?.verified),'var(--teal)');
   chartLegend('trend-legend',outcomeLegend(series.filter(k=>runs.some(r=>r[mode].counts[k]>0))));
   chartLegend('trend-ticks-legend',[{label:'Median simulation ticks reached',fill:'var(--link)',line:true}]);
+  chartLegend('trend-checkpoints-legend',[{label:'Total checkpoints verified',fill:'var(--teal)',line:true}]);
   const rows=[];
   for(const r of [...runs].reverse()){
     const tr=el('tr'),c=trendComparison(r),f=r[mode],open=el('a',runName(r),'trend-open');open.href=snapshotURL(r.id);
@@ -772,7 +802,7 @@ function renderTrend(){
     const rest=Object.entries(f.counts).filter(([key])=>!['complete_checked','unsupported','checkpoint_mismatch'].includes(key));
     const other=el('td',fmt(rest.reduce((sum,[,count])=>sum+count,0)));
     other.title=rest.filter(([,count])=>count).map(([key,count])=>(names[key]||key)+': '+fmt(count)).join('\n')||'No other outcomes';
-    tr.append(commit,el('td',date(r.finished||r.created)),compared,el('td',fmt(f.counts.complete_checked||0)),el('td',fmt(f.counts.unsupported||0)),el('td',fmt(f.counts.checkpoint_mismatch||0)),other,el('td',fmt(f.median_ticks)));
+    tr.append(commit,el('td',date(r.finished||r.created)),compared,el('td',fmt(f.counts.complete_checked||0)),el('td',fmt(f.counts.unsupported||0)),el('td',fmt(f.counts.checkpoint_mismatch||0)),other,el('td',fmt(f.median_ticks)),el('td',fmt(f.checkpoints?.verified)));
     rows.push(tr);
   }
   $('trend-rows').replaceChildren(...rows);
