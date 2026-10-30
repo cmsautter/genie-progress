@@ -1324,7 +1324,7 @@ test('verified checkpoint total sums passed checks for every outcome and ignores
     {match_id:'5',fixed:true,status:'parse_error'},
     {match_id:'6',fixed:false,status:'unsupported',checkpoints_passed:1000}
   ];a.resolve('active',value);await settle();
-  assert.equal(a.$('checkpoints-verified').textContent,'75');assert.match(a.$('checkpoints-verified-sub').textContent,/5 measured replays.*1 without usable counters/);
+  assert.equal(a.$('checkpoints-verified').textContent,'75');assert.match(a.$('checkpoints-verified-sub').title,/1 measured results lack/);
   a.$('search').value='1';a.$('search').oninput();assert.equal(a.$('checkpoints-verified').textContent,'75');
   a.$('growing').onclick();assert.equal(a.$('checkpoints-verified').textContent,'1,075');
 });
@@ -1336,14 +1336,14 @@ test('verified checkpoint total scopes frozen cohorts and rejects absent or inva
     ...[undefined,null,-1,2.5,'5'].map((n,i)=>({match_id:String(i+3),status:'parse_error',cohorts:['extension500','combined1000'],checkpoints_passed:n}))];
   a.resolve(r.id,value);await settle();a.$('core500').onclick();assert.equal(a.$('checkpoints-verified').textContent,'11');
   a.$('extension500').onclick();assert.equal(a.$('checkpoints-verified').textContent,'7');
-  a.$('combined1000').onclick();assert.equal(a.$('checkpoints-verified').textContent,'18');assert.match(a.$('checkpoints-verified-sub').textContent,/5 without usable counters/);
+  a.$('combined1000').onclick();assert.equal(a.$('checkpoints-verified').textContent,'18');assert.match(a.$('checkpoints-verified-sub').title,/5 measured results lack/);
 });
 
 test('checkpoint totals never carry over between snapshots or invent missing historical counts',async()=>{
   const a=await app();a.resolve('active',payload(active));await settle();assert.equal(a.$('checkpoints-verified').textContent,'1');
   await a.choose('baseline');assert.equal(a.$('checkpoints-verified').textContent,'—');
   const value=payload(baseline);delete value.rows[0].checkpoints_passed;a.resolve('baseline',value);await settle();
-  assert.equal(a.$('checkpoints-verified').textContent,'—');assert.match(a.$('checkpoints-verified-sub').textContent,/No checkpoint counters reported/);
+  assert.equal(a.$('checkpoints-verified').textContent,'—');assert.match(a.$('checkpoints-verified-sub').title,/lack usable passed-checkpoint counters/);
 });
 
 test('checkpoint change shows signed matched deltas including zero without subtracting the whole baseline',async()=>{
@@ -1379,4 +1379,34 @@ test('checkpoint trend uses published cohort totals and leaves unknown revisions
   assert.equal(a.$('trend-rows').children[0].children[8].textContent,'102');assert.equal(a.$('trend-rows').children[1].children[8].textContent,'—');
   a.$('combined1000').onclick();assert.equal(a.$('trend-rows').children[0].children[8].textContent,'302');
   assert.match(a.$('trend-checkpoints-legend').textContent,/Total checkpoints verified/);assert.equal(a.calls.length,0,'no replay report downloads needed on trends');
+});
+
+test('checkpoint subtitle uses full-cohort possible totals including pending replays',async()=>{
+  const r=structuredClone(active);r.fixed.checkpoints={possible:1000,possible_recordings:r.fixed.total,possible_missing_recordings:0};
+  const a=await app(manifest([r])),value=payload(r);value.rows[0].checkpoints_passed=125;value.rows[0].total_checkpoints=250;
+  a.resolve(r.id,value);await settle();assert.equal(a.$('checkpoints-verified-sub').textContent,'of 1,000 possible checkpoints · 12.5% verified');
+  assert.match(a.$('checkpoints-verified-sub').title,/including pending replays/);
+  assert.doesNotMatch(a.$('checkpoints-verified-sub').textContent,/measured replays|excluded/);
+});
+
+test('checkpoint subtitle discloses partial denominators and handles zero or unknown totals',async()=>{
+  for(const [possible,known,expected] of [[1000,5603,'of 1,000 known checkpoints · 0.1% verified'],[0,5604,'No recorded checkpoints.'],[null,0,'Possible checkpoint totals unavailable.']]){
+    const r=structuredClone(active);r.fixed.checkpoints={possible,possible_recordings:known};
+    const a=await app(manifest([r])),value=payload(r);delete value.rows[0].total_checkpoints;a.resolve(r.id,value);await settle();
+    assert.equal(a.$('checkpoints-verified-sub').textContent,expected);assert.doesNotMatch(a.$('checkpoints-verified-sub').textContent,/NaN|Infinity/);
+  }
+  const r=structuredClone(active);r.fixed.checkpoints={possible:1000,possible_recordings:r.fixed.total};
+  const a=await app(manifest([r])),empty=payload(r);empty.rows=[];a.resolve(r.id,empty);await settle();assert.equal(a.$('checkpoints-verified-sub').textContent,'of 1,000 possible checkpoints · 0.0% verified');
+});
+
+test('average replay TPS trend is cohort scoped with unknown values left as gaps',async()=>{
+  const runs=[trendRun('old'),trendRun('unknown',1),trendRun('new',2)];
+  for(const [i,r] of runs.entries())for(const [scope,n] of [['core500',100],['extension500',200],['combined1000',150]])r[scope].replay_tps={mean:i===1?null:n+i,sample_count:480,missing_count:20};
+  const a=await trendApp(trendManifest(runs)),all=node=>[node,...(node.children||[]).flatMap(all)];
+  assert.equal(all(a.$('trend-tps')).filter(n=>n.tag==='circle').length,2);
+  assert.ok(!all(a.$('trend-tps')).some(n=>n.tag==='line'&&n.style==='stroke:var(--orange)'));
+  assert.equal(a.$('trend-rows').children[0].children[9].textContent,'102');
+  a.$('combined1000').onclick();assert.equal(a.$('trend-rows').children[0].children[9].textContent,'152');
+  assert.match(all(a.$('trend-tps')).find(n=>n['data-run-id']==='new')['aria-label'],/average replay 152 TPS.*480 timed replays/);
+  assert.match(a.$('trend-tps-legend').textContent,/Mean per-replay simulation speed/);assert.equal(a.calls.length,0);
 });
