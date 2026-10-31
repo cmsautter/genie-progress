@@ -52,6 +52,7 @@ const inScope=(row,scope=mode)=>scope==='growing'||(scope==='fixed'?!!row.fixed:
 let manifestRequest=0, detailsReady=false, detailsLoading=false, detailsError='', pendingKey='', detailsController;
 let selectorKey='';
 let chartScale='linear',chartOutcome='all',chartSelectorKey='';
+let barrierView='',barrierHovered='',barrierFocused='',barrierPinned='',barrierCache;
 const progressBucketChoices=new Map();
 const progressBucketView=()=>data?.run.id+':'+mode;
 let commandCoverage,commandCoverageState='loading',commandCoverageError='',commandRequest=0,commandController,commandPendingKey='';
@@ -401,9 +402,7 @@ function render(){
   const counts={...s.counts};if(s.total>s.finished)counts.pending=s.total-s.finished;
   for(const key of orderedOutcomes(Object.keys(counts))){const count=counts[key],labelText=key==='pending'?waiting:names[key]||key;const bar=el('div');bar.style.width=100*count/Math.max(1,s.total)+'%';bar.style.background=color(key);bar.title=labelText+': '+fmt(count);$('outcome-bar').append(bar);const label=el('span');const swatch=el('i');swatch.style.background=color(key);label.append(swatch,document.createTextNode(labelText),el('b',fmt(count)),el('small',(100*count/Math.max(1,s.total)).toFixed(count&&count<s.total/1000?2:1)+'%'));$('outcome-legend').append(label);}
   renderCharts(s);
-  $('blockers').replaceChildren();for(const b of s.blockers.slice(0,7)){const item=el('div'),line=el('div',undefined,'blocker-label'),label=el('span',b.reason);label.title=b.reason;line.append(label,el('strong',fmt(b.count)));const track=el('div',undefined,'blocker-track'),fill=el('div');fill.style.width=100*b.count/Math.max(1,s.blockers[0].count)+'%';track.append(fill);item.append(line,track);$('blockers').append(item);}
-  if(!s.blockers.length)$('blockers').append(el('p','No unsupported-condition results reported in this snapshot.','chart-note'));
-  chartLegend('blockers-legend',s.blockers.length?outcomeLegend(['unsupported']):[]);
+  renderBarriers(s);
     const error=detailsError||r.failure?.message||r.error;$('error').hidden=!error;$('error').textContent=error||'';
   $('failure-diagnostics').hidden=!r.failure;
   $('failure-diagnostic-text').textContent=r.failure?'Stage: '+r.failure.stage+'\nCode: '+r.failure.code+'\n\n'+(r.failure.details||r.failure.message):'';
@@ -418,6 +417,85 @@ function render(){
   $('download').href=reportURL(r.files?.details,'data/'+r.id+'.json',detailsVersion(r));
   const filter=$('status-filter'),keep=filter.value;filter.replaceChildren(new Option('All outcomes','all'));for(const key of Object.keys(s.counts))filter.add(new Option(names[key]||key,key));filter.value=Object.hasOwn(s.counts,keep)?keep:'all';
   renderCheckpointGroups();renderCommandCoverage();renderReplayChanges();renderTable();
+}
+function reportedBarrierReasons(row){
+  const reasons=new Set();
+  for(const entry of row.unsupported||[])for(const item of [entry,...entry.freezes||[]])
+    if(typeof item.reason==='string'&&item.reason.trim())reasons.add(item.reason);
+  return reasons;
+}
+function barrierIndex(){
+  if(!detailsReady||detailsLoading)return null;
+  const view=progressBucketView();
+  if(barrierCache?.rows===data.rows&&barrierCache.view===view)return barrierCache.index;
+  const index=new Map();
+  for(const row of data.rows.filter(row=>inScope(row)))for(const reason of reportedBarrierReasons(row)){
+    if(!index.has(reason))index.set(reason,new Map());
+    index.get(reason).set(row.match_id,row);
+  }
+  barrierCache={rows:data.rows,view,index};return index;
+}
+function activeBarrier(){
+  if(barrierView!==progressBucketView())return '';
+  return barrierHovered||barrierFocused||barrierPinned;
+}
+function updateBarrierPreview(){
+  if(!data)return;
+  renderProgressChart(data.run[mode]);
+  const active=activeBarrier();
+  for(const item of $('blockers').children)if(item.barrierReason)item.setAttribute('data-previewed',String(item.barrierReason===active));
+}
+function renderBarriers(summary){
+  const view=progressBucketView();
+  if(barrierView!==view){barrierView=view;barrierHovered='';barrierFocused='';barrierPinned='';}
+  const index=barrierIndex(),ready=index!==null;
+  const reasons=ready?[...index].map(([reason,rows])=>({reason,count:rows.size})).sort((a,b)=>b.count-a.count||a.reason.localeCompare(b.reason)):summary.blockers;
+  if(ready&&!index.has(activeBarrier())){barrierHovered='';barrierFocused='';barrierPinned='';}
+  const scroll=$('blockers').scrollTop||0,focused=barrierFocused;
+  $('blockers').replaceChildren();
+  for(const entry of reasons){
+    const item=el('button',undefined,'barrier-row'),line=el('span',undefined,'blocker-label'),label=el('span',entry.reason);
+    item.type='button';item.barrierReason=entry.reason;item.disabled=!ready;item.title=entry.reason;
+    item.setAttribute('aria-controls','percent-chart');item.setAttribute('aria-describedby','barrier-help');
+    item.setAttribute('data-previewed',String(entry.reason===activeBarrier()));
+    label.title=entry.reason;line.append(label,el('strong',fmt(entry.count)));
+    const track=el('span',undefined,'blocker-track'),fill=el('span');fill.style.width=100*entry.count/Math.max(1,reasons[0].count)+'%';track.append(fill);item.append(line,track);
+    item.addEventListener('pointerenter',event=>{if(event.pointerType==='touch')return;barrierHovered=entry.reason;updateBarrierPreview();});
+    item.addEventListener('pointerleave',()=>{if(barrierHovered===entry.reason)barrierHovered='';updateBarrierPreview();});
+    item.addEventListener('focus',()=>{if(item.matches&&!item.matches(':focus-visible'))return;barrierFocused=entry.reason;updateBarrierPreview();});
+    item.addEventListener('blur',()=>{if(barrierFocused===entry.reason)barrierFocused='';updateBarrierPreview();});
+    item.addEventListener('pointerup',event=>{if(event.pointerType==='touch'){barrierPinned=barrierPinned===entry.reason?'':entry.reason;updateBarrierPreview();}});
+    item.addEventListener('keydown',event=>{if(event.key==='Escape'){barrierHovered='';barrierFocused='';barrierPinned='';updateBarrierPreview();}});
+    $('blockers').append(item);
+    if(focused===entry.reason&&globalThis.requestAnimationFrame)globalThis.requestAnimationFrame(()=>{if(item.isConnected)item.focus({preventScroll:true});});
+  }
+  if(!reasons.length)$('blockers').append(el('p',ready?'No unsupported-condition results reported in this snapshot.':'Loading stopping reasons…','chart-note'));
+  $('blockers').scrollTop=scroll;
+  $('barrier-count').textContent=fmt(reasons.length)+(ready?' reason'+(reasons.length===1?'':'s'):' leading reasons · loading full list');
+  $('barrier-help').textContent=ready?'Hover or focus a reason to preview matching games. Scroll for all reasons. On touch screens, tap a reason; tap again or clear the preview to reset. Games can report several conditions.':'The complete reason list and previews become available when recording details finish loading.';
+  chartLegend('blockers-legend',reasons.length?outcomeLegend(['unsupported']):[]);
+  renderProgressChart(summary);
+}
+function barrierHistogram(rows){
+  const edges=[...Array.from({length:11},(_,i)=>i),...Array.from({length:18},(_,i)=>15+i*5)];
+  const buckets=edges.slice(0,-1).map((lo,i)=>({label:lo+'–'+edges[i+1]+'%',counts:{}}));
+  let measurable=0;
+  for(const row of rows){
+    if(!Number.isInteger(row.total_ticks)||row.total_ticks<=0||!['complete','unsupported','initialization_unsupported','checkpoint_mismatch'].includes(row.status))continue;
+    const percent=100*(row.completed_ticks||0)/row.total_ticks;
+    let i=buckets.findIndex((bucket,i)=>edges[i]<=percent&&percent<edges[i+1]);if(i<0)i=buckets.length-1;
+    const key=outcome(row);buckets[i].counts[key]=(buckets[i].counts[key]||0)+1;
+    if(chartOutcome==='all'||key===chartOutcome)measurable++;
+  }
+  return {buckets,measurable};
+}
+function renderProgressChart(summary){
+  const view=progressBucketView(),fine=progressBucketChoices.has(view)?progressBucketChoices.get(view):!(Number.isFinite(summary.median_percent)&&summary.median_percent>10);
+  const reason=activeBarrier(),index=barrierIndex(),rows=reason&&index?.has(reason)?[...index.get(reason).values()]:null;
+  const filtered=rows?barrierHistogram(rows):null;
+  $('barrier-preview').hidden=!filtered;
+  $('barrier-preview-note').textContent=filtered?'Showing '+fmt(filtered.measurable)+' measurable '+(filtered.measurable===1?'game':'games')+' of '+fmt(rows.length)+' reporting “'+reason+'”'+(chartOutcome==='all'?'.':' · '+(names[chartOutcome]||chartOutcome)+' only.') :'';
+  chart('percent-chart',progressBuckets(filtered?filtered.buckets:summary.histogram,fine));
 }
 function renderCheckpointTotal(){
   const total=$('checkpoints-verified'),note=$('checkpoints-verified-sub');
@@ -690,7 +768,7 @@ function renderCharts(summary){
   const view=progressBucketView(),fine=progressBucketChoices.has(view)?progressBucketChoices.get(view):!(Number.isFinite(summary.median_percent)&&summary.median_percent>10);
   $('percent-fine-buckets').checked=fine;
   $('percent-bucket-note').textContent=(fine?'1% buckets through 10%, then 5% buckets.':'5% buckets throughout (0–5%, 5–10%, …, 95–100%).')+' Each bucket has equal display width. The default uses this view’s median simulation progress; your choice is kept for this snapshot and cohort.';
-  chart('percent-chart',progressBuckets(summary.histogram,fine));chart('ticks-chart',summary.ticks_histogram);
+  renderProgressChart(summary);chart('ticks-chart',summary.ticks_histogram);
 }
 function svgCanvas(W,H){
   const ns='http://www.w3.org/2000/svg',svg=document.createElementNS(ns,'svg');svg.setAttribute('viewBox',`0 0 ${W} ${H}`);
@@ -959,6 +1037,7 @@ $('retry-details').onclick=()=>{detailsCache.delete(selected);loadDetails(manife
 for(const id of ['search','status-filter','sort'])$(id).addEventListener('input',()=>{linkedReplay='';linkedReplayScrolled=false;page=0;renderTable();});
 $('previous').onclick=()=>{page--;renderTable();};$('next').onclick=()=>{page++;renderTable();};
 $('provenance').onclick=()=>$('method').showModal();$('close-method').onclick=()=>$('method').close();
+$('barrier-preview-clear').onclick=()=>{barrierHovered='';barrierFocused='';barrierPinned='';updateBarrierPreview();};
 $('chart-scale').onchange=event=>{chartScale=event.currentTarget.value;if(data)renderCharts(data.run[mode]);};
 $('percent-fine-buckets').onchange=event=>{if(data){progressBucketChoices.set(progressBucketView(),event.currentTarget.checked);renderCharts(data.run[mode]);}};
 $('chart-outcome').onchange=event=>{chartOutcome=event.currentTarget.value;if(data)renderCharts(data.run[mode]);};

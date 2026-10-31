@@ -1417,3 +1417,53 @@ test('average replay TPS trend is cohort scoped with unknown values left as gaps
   assert.match(all(a.$('trend-tps')).find(n=>n['data-run-id']==='new')['aria-label'],/average replay 152 TPS.*480 timed replays/);
   assert.match(a.$('trend-tps-legend').textContent,/Mean per-replay simulation speed/);assert.equal(a.calls.length,0);
 });
+
+function barrierFixture(){
+  const r=structuredClone(active);r.fixed.histogram=[{label:'0–1%',counts:{unsupported:9}},{label:'5–6%',counts:{unsupported:8}}];r.fixed.ticks_histogram=[{label:'0–500',counts:{unsupported:17}}];
+  const value=payload(r);value.rows=[
+    {match_id:'1',fixed:true,status:'unsupported',total_ticks:1000,completed_ticks:250,unsupported:[{reason:'Shared reason',freezes:[{reason:'Nested reason'},{reason:'Shared reason'}]},{reason:'Shared reason'}]},
+    {match_id:'2',fixed:true,status:'checkpoint_mismatch',total_ticks:1000,completed_ticks:500,unsupported:[{reason:'Shared reason'}]},
+    {match_id:'3',fixed:true,status:'unsupported',total_ticks:1000,completed_ticks:1,unsupported:[{reason:'Shared reason with a suffix'}]},
+    {match_id:'4',fixed:false,status:'unsupported',total_ticks:1000,completed_ticks:100,unsupported:[{reason:'Outside fixed cohort'}]}];
+  return {r,value};
+}
+function histogramCount(a,id='percent-chart'){return histogramGroups(a,id).flatMap(histogramBars).reduce((sum,bar)=>sum+bar['data-count'],0);}
+
+test('hover previews exact barrier reasons and restores only the progress chart on leave',async()=>{
+  const {r,value}=barrierFixture(),a=await app(manifest([r]));a.resolve(r.id,value);await settle();
+  const button=a.$('blockers').children.find(n=>n.barrierReason==='Shared reason'),ticks=a.$('ticks-chart').children[0],rows=a.$('rows').children.length;
+  assert.equal(button.children[0].children[1].textContent,'2','duplicate player/freeze reports count a replay once');
+  assert.equal(histogramCount(a),17);button.onpointerenter({pointerType:'mouse'});
+  assert.equal(histogramCount(a),2);assert.match(a.$('barrier-preview-note').textContent,/2 measurable games of 2 reporting “Shared reason”/);
+  assert.equal(a.$('ticks-chart').children[0],ticks);assert.equal(a.$('rows').children.length,rows);assert.equal(a.$('search').value,'');
+  button.onpointerleave();assert.equal(histogramCount(a),17);assert.equal(a.$('barrier-preview').hidden,true);
+  const nested=a.$('blockers').children.find(n=>n.barrierReason==='Nested reason');nested.onpointerenter({pointerType:'mouse'});assert.equal(histogramCount(a),1);
+  a.$('growing').onclick();assert.equal(a.$('barrier-preview').hidden,true,'cohort switches clear the old preview');
+});
+
+test('barriers include every reason from loaded results beyond truncated summary counts',async()=>{
+  const r=structuredClone(active);r.fixed.blockers=[{reason:'Only summary entry',count:1}];const a=await app(manifest([r])),value=payload(r);
+  assert.equal(a.$('blockers').children[0].disabled,true,'preview waits for complete recording diagnostics');
+  value.rows=Array.from({length:45},(_,i)=>({match_id:String(i),fixed:true,status:'unsupported',total_ticks:1000,completed_ticks:i,unsupported:[{reason:'Reason '+i}]}));
+  a.resolve(r.id,value);await settle();assert.equal(a.$('blockers').children.length,45);assert.equal(a.$('barrier-count').textContent,'45 reasons');
+  assert.ok(a.$('blockers').children.every(n=>n.tag==='button'&&!n.disabled));assert.ok(a.$('blockers').children.some(n=>n.barrierReason==='Reason 44'));
+});
+
+test('keyboard and touch reason previews can be cleared and preserve display choices',async()=>{
+  const {r,value}=barrierFixture(),a=await app(manifest([r]));a.resolve(r.id,value);await settle();
+  const button=a.$('blockers').children.find(n=>n.barrierReason==='Shared reason');button.onfocus();assert.equal(histogramCount(a),2);
+  a.$('chart-scale').value='log';a.$('chart-scale').onchange({currentTarget:a.$('chart-scale')});assert.equal(histogramCount(a),2);
+  a.$('chart-outcome').value='checkpoint_mismatch';a.$('chart-outcome').onchange({currentTarget:a.$('chart-outcome')});assert.equal(histogramCount(a),1);
+  a.$('percent-fine-buckets').checked=false;a.$('percent-fine-buckets').onchange({currentTarget:a.$('percent-fine-buckets')});assert.equal(histogramGroups(a).length,20);
+  button.onblur();assert.equal(a.$('barrier-preview').hidden,true);assert.equal(a.$('chart-scale').value,'log');assert.equal(a.$('percent-fine-buckets').checked,false);
+  a.$('chart-outcome').value='all';a.$('chart-outcome').onchange({currentTarget:a.$('chart-outcome')});
+  button.onpointerup({pointerType:'touch'});assert.equal(histogramCount(a),2);button.onpointerleave();assert.equal(histogramCount(a),2);
+  a.$('barrier-preview-clear').onclick();assert.equal(histogramCount(a),17);assert.equal(a.$('barrier-preview').hidden,true);
+  button.onfocus();button.onkeydown({key:'Escape'});assert.equal(a.$('barrier-preview').hidden,true);
+});
+
+test('reasons without measurable progress show an honest empty preview',async()=>{
+  const {r,value}=barrierFixture();value.rows.push({match_id:'5',fixed:true,status:'initialization_unsupported',unsupported:[{reason:'No simulation length'}]});
+  const a=await app(manifest([r]));a.resolve(r.id,value);await settle();const b=a.$('blockers').children.find(n=>n.barrierReason==='No simulation length');b.onfocus();
+  assert.equal(histogramCount(a),0);assert.match(a.$('barrier-preview-note').textContent,/0 measurable games of 1/);assert.match(a.$('percent-chart').textContent,/No recordings for this selection/);
+});
