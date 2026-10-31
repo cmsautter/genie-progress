@@ -324,14 +324,21 @@ test('histograms keep category slots fixed and all bars share a baseline',async(
   assert.ok(Math.abs(third[0].x-second[1].x-step)<1e-9,'missing series keep their empty slot');
 });
 
-test('linear histogram heights are proportional and scale changes preserve counts',async()=>{
+test('histograms default to linear while optional log scale preserves counts',async()=>{
   const current=structuredClone(active);current.fixed.histogram=[{label:'0–1%',counts:{unsupported:100,checkpoint_mismatch:50}}];
   const a=await app(manifest([current,baseline]));
-  a.$('chart-scale').value='linear';a.$('chart-scale').onchange({currentTarget:a.$('chart-scale')});
+  assert.equal(a.$('chart-scale').value,'linear');
   const bars=histogramBars(histogramGroups(a)[0]);
   assert.equal(bars[0].height/bars[1].height,2);
   assert.equal(a.$('percent-scale-label').textContent,'Linear count axis');
   assert.match(a.$('chart-scale-note').textContent,/proportional/);
+  assert.equal(a.$('ticks-scale-label').textContent,'Linear count axis');
+  a.$('chart-scale').value='log';a.$('chart-scale').onchange({currentTarget:a.$('chart-scale')});
+  const logBars=histogramBars(histogramGroups(a)[0]);
+  assert.equal(logBars[0]['data-count'],100);assert.equal(logBars[1]['data-count'],50);
+  assert.ok(logBars[0].height/logBars[1].height<2);
+  assert.equal(a.$('percent-scale-label').textContent,'Log count axis');
+  assert.equal(a.$('ticks-scale-label').textContent,'Log count axis');
   const axis=a.context.countAxis(100,'linear',200);assert.equal(axis.scale(0),0);assert.equal(axis.scale(100),200);
   const log=a.context.countAxis(100,'log',200);assert.equal(log.scale(0),0);assert.equal(log.scale(100),200);
 });

@@ -51,7 +51,7 @@ if(!trendPage&&/^[A-Za-z0-9_-]+$/.test(requestedRun||'')){selected=requestedRun;
 const inScope=(row,scope=mode)=>scope==='growing'||(scope==='fixed'?!!row.fixed:row.cohorts?.includes(scope));
 let manifestRequest=0, detailsReady=false, detailsLoading=false, detailsError='', pendingKey='', detailsController;
 let selectorKey='';
-let chartScale='log',chartOutcome='all',chartSelectorKey='';
+let chartScale='linear',chartOutcome='all',chartSelectorKey='';
 const progressBucketChoices=new Map();
 const progressBucketView=()=>data?.run.id+':'+mode;
 let commandCoverage,commandCoverageState='loading',commandCoverageError='',commandRequest=0,commandController,commandPendingKey='';
