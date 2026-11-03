@@ -220,7 +220,7 @@ function date(value){return value ? new Date(value).toLocaleString(undefined,{da
 function visibleRuns(runs){
   const seen=new Set();
   return [...runs].sort((a,b)=>Date.parse(b.created)-Date.parse(a.created)).filter(r=>{
-    if((r.pilot||r.status==='continued')&&r.id!==selected)return false;
+    if((r.pilot||['continued','build_failed','aborted'].includes(r.status))&&r.id!==selected)return false;
     const series=r.workflow?.kind==='one_off_full'?'one-off':r.growing.total>1000?'full-corpus':'baseline';
     const key=r.imported?'historical:'+r.id:r.sha+':'+(r.build_profile||'legacy')+':'+series;
     if(seen.has(key)&&!(r.id===selected&&r.status==='complete'))return false;

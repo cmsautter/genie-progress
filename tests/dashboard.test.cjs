@@ -180,7 +180,7 @@ test('unchanged selector options are retained when active progress refreshes',as
 
 test('adapter preparation failures are distinct from compiler failures',async()=>{
   const failed=run('failed',0,0,{status:'build_failed',error:'A sanitized old error',failure:{stage:'adapter',code:'workspace_layout',message:'The adapter needs an update before compilation.',details:'Package genie-oracle moved to crates/tools.'}});
-  const a=await app(manifest([failed,baseline]));
+  const a=await app(manifest([failed,baseline]),{search:'?run=failed'});
   assert.equal(a.$('run-state').textContent,'● Adapter update needed');
   assert.match(a.$('run-select').options[0].textContent,/Adapter update needed/);
   assert.equal(a.$('error').textContent,failed.failure.message);
@@ -197,7 +197,7 @@ test('adapter preparation failures are distinct from compiler failures',async()=
 
 test('compiler failures show a readable status and separate diagnostics',async()=>{
   const failed=run('failed',0,0,{status:'build_failed',failure:{stage:'compilation',code:'compiler_error',message:'Rust compilation failed.',details:'error[E0001]: incompatible API'}});
-  const a=await app(manifest([failed,baseline]));
+  const a=await app(manifest([failed,baseline]),{search:'?run=failed'});
   assert.equal(a.$('run-state').textContent,'● Build failed');
   assert.equal(a.$('error').textContent,'Rust compilation failed.');
   assert.match(a.$('failure-diagnostic-text').textContent,/error\[E0001\]/);
@@ -234,13 +234,17 @@ test('selector keeps the four requested snapshots and archives superseded attemp
   assert.ok(a.$('archived-list').children.some(li=>li.children[2].href==='data/old-complete.json'));
 });
 
-test('a new unresolved failure stays visible and a growing rerun replaces the previous same-profile entry',async()=>{
+test('failed and aborted attempts are archived while the current benchmark stays selected',async()=>{
   const previous=run('previous',5604,9,{status:'complete',build_profile:'release',created:'2026-10-19T18:00:00Z'});
   const current={...previous,id:'current',status:'running',created:'2026-10-19T19:00:00Z'};
   const failed={...current,id:'new-failure',sha:'f'.repeat(40),status:'build_failed',created:'2026-10-19T20:00:00Z'};
-  const a=await app(manifest([failed,current,previous,baseline]));
-  assert.deepEqual(a.$('run-select').options.map(o=>o.value),['new-failure','current','baseline']);
-  assert.match(a.$('run-select').options[0].textContent,/Build failed/);
+  const aborted={...failed,id:'new-aborted',status:'aborted',created:'2026-10-19T21:00:00Z'};
+  const a=await app(manifest([aborted,failed,current,previous,baseline]));
+  assert.deepEqual(a.$('run-select').options.map(o=>o.value),['current','baseline']);
+  assert.equal(a.$('run-select').value,'current');
+  assert.equal(a.$('archived-count').textContent,'3');
+  assert.ok(a.$('archived-list').children.some(li=>li.children[0].href.includes('run=new-failure')));
+  assert.ok(a.$('archived-list').children.some(li=>li.children[0].href.includes('run=new-aborted')));
 });
 
 test('checkpoint mismatches show named checks and recorded versus simulated values',async()=>{
@@ -769,7 +773,7 @@ test('hash-pinned details reject inconsistent cohort membership',async()=>{
 });
 test('aborted runs label unmeasured cases without implying they are queued',async()=>{
   const r=run('aborted',20,0,{status:'aborted',finished:'2026-10-19T19:00:00Z'});
-  const a=await app(manifest([r]));
+  const a=await app(manifest([r]),{search:'?run=aborted'});
   assert.equal(a.$('run-state').textContent,'● Aborted');
   assert.match(a.$('outcome-note').textContent,/unmeasured/);
 });
