@@ -66,7 +66,8 @@ jobs:
           import datetime, hashlib, json, os, pathlib, re, shutil, tarfile
           from collections import Counter, defaultdict
           MiB = 1024**2
-          MAX_REPORT_BYTES = 25 * MiB
+          # Historical full-corpus reports include compact per-recording dt statistics.
+          MAX_REPORT_BYTES = 32 * MiB
           # Thirty retained reports plus their manifest can exceed the old 250 MiB cap.
           MAX_ARCHIVE_BYTES = 800 * MiB
           # Leave room below GitHub Pages' 1 GB site limit, including all derived aliases.
@@ -80,7 +81,7 @@ jobs:
                   assert str(path) == 'manifest.json' or (len(path.parts) == 2 and path.parts[0] in ('data', 'coverage', 'changes') and path.suffix == '.json')
                   total += member.size
                   if member.size >= MAX_REPORT_BYTES:
-                      raise ValueError(f'Report {path} exceeds the 25 MiB file budget ({member.size} bytes)')
+                      raise ValueError(f'Report {path} exceeds the 32 MiB file budget ({member.size} bytes)')
                   if total >= MAX_ARCHIVE_BYTES:
                       raise ValueError(f'Retained report JSON exceeds the 800 MiB archive budget ({total} bytes)')
                   data = archive.extractfile(member).read()
