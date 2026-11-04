@@ -9,6 +9,14 @@ function averageTPS(row){
   const speed=ticks/seconds;
   return Number.isFinite(speed)?speed:null;
 }
+function recordedDt(row){
+  const value=row.recorded_dt;
+  if(!value||!Number.isSafeInteger(value.frame_count)||value.frame_count<=0||
+    !['mean_ms','stddev_ms','min_ms','max_ms'].every(key=>elapsedSeconds(value[key])!==null)||
+    value.min_ms>value.mean_ms||value.mean_ms>value.max_ms)return null;
+  return value;
+}
+const dtNumber=value=>value.toLocaleString('en-US',{maximumFractionDigits:2});
 function runDuration(value){
   if(elapsedSeconds(value)===null)return '—';
   const tenths=Math.round(value*10),hours=Math.floor(tenths/36000),minutes=Math.floor(tenths%36000/600),seconds=(tenths%600/10).toFixed(1);
@@ -945,6 +953,10 @@ function renderTable(){
     }else if(sort==='tps-asc'||sort==='tps-desc'){
       const left=averageTPS(a),right=averageTPS(b);
       order=left===null?(right===null?0:1):right===null?-1:(sort==='tps-asc'?1:-1)*(left-right);
+    }else if(/^dt-(mean|stddev|min|max)-(asc|desc)$/.test(sort)){
+      const [,field,direction]=sort.match(/^dt-(mean|stddev|min|max)-(asc|desc)$/);
+      const left=recordedDt(a)?.[field+'_ms']??null,right=recordedDt(b)?.[field+'_ms']??null;
+      order=left===null?(right===null?0:1):right===null?-1:(direction==='asc'?1:-1)*(left-right);
     }else if(sort==='ticks-desc')order=ticks(b)-ticks(a);
     else if(sort!=='id'){
       order=(sort==='progress-asc'?1:-1)*(progress(a)-progress(b));
@@ -975,6 +987,14 @@ function renderTable(){
       runtime.append(el('small',r.runtime_source==='retained'?'Retained':'Historical'));
     const tps=averageTPS(r),speed=el('td',tps===null?'—':tps.toLocaleString('en-US',{maximumSignificantDigits:4}),'recording-speed');
     speed.title=tps===null?'Average speed unavailable: requires a completed-tick counter and positive recorded wall time.':'Completed simulation ticks divided by recorded wall time in seconds. Includes parsing and any startup counted by that timer.';
+    const dt=recordedDt(r),timestep=el('td',undefined,'recording-dt');
+    if(dt){
+      timestep.append(el('span',dtNumber(dt.mean_ms)+' ms (± '+dtNumber(dt.stddev_ms)+' ms)'));
+      timestep.append(el('small',dtNumber(dt.min_ms)+'–'+dtNumber(dt.max_ms)+' ms range'));
+      timestep.title='Recorded game timestep: frame-weighted mean ± population standard deviation over all '+fmt(dt.frame_count)+' recorded frames across every chapter. Independent of simulation stopping point, engine version and wall time.';
+    }else{
+      timestep.textContent='—';timestep.title='Recorded timestep statistics unavailable: no complete matching recording census.';
+    }
     const diagnostic=el('td');
     if(r.status==='checkpoint_mismatch')diagnostic.append(checkpointDetails(r));
     else{
@@ -989,7 +1009,7 @@ function renderTable(){
       }
     }
     if(linked)for(const child of diagnostic.children)if(child.tagName==='DETAILS')child.open=true;
-    tr.append(first,status,ticks,percent,checkpoint,runtime,speed,diagnostic);$('rows').append(tr);
+    tr.append(first,status,ticks,percent,checkpoint,runtime,speed,timestep,diagnostic);$('rows').append(tr);
     if(linked&&!linkedReplayScrolled){
       const query=linkedReplay,runId=data.run.id,focus=()=>{if(tr.isConnected===false||selected!==runId||linkedReplay!==query)return;tr.scrollIntoView?.({block:'center'});tr.focus?.({preventScroll:true});linkedReplayScrolled=true;};
       if(globalThis.requestAnimationFrame)globalThis.requestAnimationFrame(focus);else focus();

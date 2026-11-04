@@ -256,7 +256,7 @@ test('checkpoint mismatches show named checks and recorded versus simulated valu
       {player:2,word:7,recorded:1,simulated:2},
       {player:2,word:9,recorded:4294967295,simulated:123}]}];
   a.resolve('active',p);await settle();
-  const details=a.$('rows').children[0].children[7].children[0];
+  const details=a.$('rows').children[0].children[8].children[0];
   assert.equal(details.tag,'details');
   assert.match(details.children[0].textContent,/Mismatch at update 499.*Object positions.*Actions and unit AI/);
   assert.match(details.textContent,/Player 1/);
@@ -267,7 +267,7 @@ test('checkpoint mismatches show named checks and recorded versus simulated valu
   assert.equal(groups.length,2);assert.equal(a.$('checkpoint-count').textContent,'1 recording');
   assert.equal(groups[0].children[0].children[1].textContent,'1');
   details.open=true;details.ontoggle();a.context.renderTable();
-  assert.equal(a.$('rows').children[0].children[7].children[0].open,true);
+  assert.equal(a.$('rows').children[0].children[8].children[0].open,true);
 });
 
 test('selecting a checkpoint category filters affected recordings',async()=>{
@@ -434,7 +434,7 @@ test('structured errors expose pinned source and repeated context and filter by 
   value.rows=[{match_id:'200',fixed:true,status:'unsupported',completed_ticks:10,total_ticks:100,unsupported:[{reason:'Invariant failed',engine_error:error}]},
     {match_id:'201',fixed:true,status:'unsupported',completed_ticks:9,total_ticks:100,unsupported:[{reason:'Legacy stop'}]}];
   a.resolve('active',value);await settle();
-  const detail=a.$('rows').children[0].children[7];
+  const detail=a.$('rows').children[0].children[8];
   assert.match(detail.textContent,/Engine invariant.*update.*object: 12.*object: 34/);
   const all=node=>[node,...(node.children||[]).flatMap(all)];
   const link=all(detail).find(n=>n.tag==='a'&&n.href.startsWith('https://github.com/'));
@@ -447,7 +447,7 @@ test('structured error source links reject paths outside the engine repository',
   const a=await app(),value=payload(active);
   value.rows=[{match_id:'200',fixed:true,status:'parse_error',reason:'Invalid input',engine_error:{schema:2,kind:'invalid_input',phase:'parse',location:{repository_path:'crates/../../private.rs',line:1},context:[]}}];
   a.resolve('active',value);await settle();
-  const detail=a.$('rows').children[0].children[7];
+  const detail=a.$('rows').children[0].children[8];
   const all=node=>[node,...(node.children||[]).flatMap(all)];
   assert.ok(!all(detail).some(n=>n.tag==='a'&&n.href.startsWith('https://github.com/')));
   assert.match(detail.textContent,/Invalid input.*parse/);
@@ -457,7 +457,7 @@ test('locally injected adapter sites do not link to nonexistent upstream source'
   const a=await app(),value=payload(active);
   value.rows=[{match_id:'200',fixed:true,status:'parse_error',reason:'Invalid input',engine_error:{schema:2,kind:'invalid_input',phase:'parse',location:{repository_path:'crates/tools/genie-oracle/src/progress.rs',line:47},context:[]}}];
   a.resolve('active',value);await settle();
-  const detail=a.$('rows').children[0].children[7];
+  const detail=a.$('rows').children[0].children[8];
   assert.match(detail.textContent,/Benchmark adapter at/);
   const all=node=>[node,...(node.children||[]).flatMap(all)];
   assert.ok(!all(detail).some(n=>n.tag==='a'&&n.href.startsWith('https://github.com/')));
@@ -585,6 +585,12 @@ test('actual full-size reports render, including a historical baseline when reta
       if(speeds.length)assert.equal(firstVisibleID(),speeds[0].match_id);
     }
   }
+  const dtRows=fileJSON(path.join(directory,'data',current.id+'.json')).rows.filter(r=>scoped(r)&&r.recorded_dt);
+  for(const field of ['mean','stddev','min','max'])for(const [direction,multiplier] of [['asc',1],['desc',-1]]){
+    dtRows.sort((a,b)=>multiplier*(a.recorded_dt[field+'_ms']-b.recorded_dt[field+'_ms'])||a.match_id.localeCompare(b.match_id));
+    a.$('sort').value=`dt-${field}-${direction}`;a.$('sort').oninput();
+    if(dtRows.length){assert.equal(firstVisibleID(),dtRows[0].match_id);assert.match(a.$('rows').children[0].children[7].textContent,/ms \(± .*ms\).*ms range/);}
+  }
   const mismatchLabel=count=>count.toLocaleString('en-US')+' recording'+(count===1?'':'s');
   assert.equal(a.$('checkpoint-count').textContent,mismatchLabel(current[scope].counts.checkpoint_mismatch));
   a.$(allScope).onclick();
@@ -593,7 +599,7 @@ test('actual full-size reports render, including a historical baseline when reta
     await until(()=>a.$('command-coverage-content').hidden===false);
     assert.equal(a.$('command-coverage-content').hidden,false);
     assert.match(a.$('command-occurrences-count').textContent,new RegExp(available[current.id][allScope].command_occurrences.toLocaleString('en-US')));
-    assert.equal(a.$('command-rows').children.length,12);
+    assert.equal(a.$('command-rows').children.length,Math.min(12,available[current.id][allScope].rows.filter(row=>row.status!=='implemented').length));
   }
   a.$('fixed').onclick();
   if(!historical)return; // Older runs can be absent from the rolling export.
@@ -1308,7 +1314,7 @@ test('recording permalinks open checkpoint diagnostics even without a comparison
   const a=await app(manifest(),{search:'?run=active&engine='+active.sha+'&match=200&view=recording'});
   a.resolve('active',value);await settle();
   const row=a.$('rows').children[0];assert.equal(a.$('rows').children.length,1);assert.equal(row['data-linked-recording'],'true');
-  const detail=row.children[7].children[0];assert.equal(detail.open,true);
+  const detail=row.children[8].children[0];assert.equal(detail.open,true);
   const link=detail.children.find(n=>n.className==='detail-permalink');assert.ok(link);assert.match(link.href,/view=recording#recordings$/);assert.match(link.href,/match=200/);
   assert.equal(a.$('search').value,'200');assert.match(a.$('row-count').textContent,/Linked recording 200/);
   a.$('search').value='';a.$('search').oninput();assert.equal(a.$('rows').children.length,2);assert.equal(a.$('rows').children[0]['data-linked-recording'],undefined);
@@ -1470,4 +1476,45 @@ test('reasons without measurable progress show an honest empty preview',async()=
   const {r,value}=barrierFixture();value.rows.push({match_id:'5',fixed:true,status:'initialization_unsupported',unsupported:[{reason:'No simulation length'}]});
   const a=await app(manifest([r]));a.resolve(r.id,value);await settle();const b=a.$('blockers').children.find(n=>n.barrierReason==='No simulation length');b.onfocus();
   assert.equal(histogramCount(a),0);assert.match(a.$('barrier-preview-note').textContent,/0 measurable games of 1/);assert.match(a.$('percent-chart').textContent,/No recordings for this selection/);
+});
+
+test('recorded dt displays mean, population deviation and range; sorts all four raw statistics',async()=>{
+  const a=await app(),value=payload(active);
+  const stats=(mean,stddev,min,max)=>({mean_ms:mean,stddev_ms:stddev,min_ms:min,max_ms:max,frame_count:100});
+  value.rows=[
+    {match_id:'a-higher',fixed:true,status:'unsupported',recorded_dt:stats(42.00002,3,20,80)},
+    {match_id:'z-lower',fixed:true,status:'unsupported',recorded_dt:stats(42.00001,1,25,60)},
+    {match_id:'constant',fixed:true,status:'complete',recorded_dt:stats(50,0,50,50)},
+    {match_id:'missing',fixed:true,status:'parse_error'},
+    {match_id:'invalid',fixed:true,status:'unsupported',recorded_dt:stats(40,NaN,20,60)},
+    {match_id:'growing',fixed:false,status:'complete',recorded_dt:stats(13,2,8,25)}
+  ];
+  a.resolve('active',value);await settle();
+  const ids=()=>a.$('rows').children.map(row=>row.children[0].textContent);
+  for(const field of ['mean','stddev','min','max'])for(const [direction,multiplier] of [['asc',1],['desc',-1]]){
+    a.$('sort').value=`dt-${field}-${direction}`;a.$('sort').oninput();
+    const expected=value.rows.slice(0,3).sort((x,y)=>multiplier*(x.recorded_dt[field+'_ms']-y.recorded_dt[field+'_ms'])||x.match_id.localeCompare(y.match_id)).map(row=>row.match_id);
+    assert.deepEqual(ids().slice(0,3),expected);
+    assert.deepEqual(ids().slice(3),['invalid','missing']);
+  }
+  a.$('sort').value='dt-mean-asc';a.$('sort').oninput();
+  assert.equal(ids()[0],'z-lower'); // unrounded sorting, despite identical displayed means
+  const cell=a.$('rows').children[0].children[7];
+  assert.equal(cell.children[0].textContent,'42 ms (± 1 ms)');
+  assert.equal(cell.children[1].textContent,'25–60 ms range');
+  assert.match(cell.title,/population standard deviation.*100 recorded frames.*Independent of simulation/);
+  assert.equal(a.$('rows').children[3].children[7].textContent,'—');
+  a.$('growing').onclick();assert.equal(ids()[0],'growing');
+});
+
+test('recorded dt accepts zero and rejects incomplete counters and inverted ranges',async()=>{
+  const a=await app();
+  const stats={mean_ms:0,stddev_ms:0,min_ms:0,max_ms:0,frame_count:1};
+  assert.equal(a.context.recordedDt({recorded_dt:stats}).mean_ms,0);
+  for(const change of [{frame_count:0},{frame_count:1.5},{mean_ms:'42'},{stddev_ms:-1},{min_ms:1},{max_ms:-1}])
+    assert.equal(a.context.recordedDt({recorded_dt:{...stats,...change}}),null);
+  const html=fs.readFileSync(path.join(__dirname,'../site/index.html'),'utf8');
+  assert.match(html,/class="dt-mean-symbol"/);
+  for(const field of ['mean','stddev','min','max'])for(const direction of ['asc','desc'])
+    assert.ok(html.includes(`value="dt-${field}-${direction}"`));
 });
